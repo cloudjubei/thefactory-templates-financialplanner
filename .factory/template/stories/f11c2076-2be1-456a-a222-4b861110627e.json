@@ -1,0 +1,12 @@
+{
+  "id": "f11c2076-2be1-456a-a222-4b861110627e",
+  "title": "LLM-powered web search for Top Picks",
+  "description": "Story 1's feature populates the Top Picks panel from the agent's own knowledge. Upgrade it to a real web search so the picks reflect current funds, recent performance, and named providers in the chosen investment domain. Output stays in data/top-picks.json; only the upstream source changes.",
+  "status": "?",
+  "features": [],
+  "blockers": [
+    "Needs the web-search tool exposed in ALL_CHAT_AGENT_TOOLS and DEFAULT_AVAILABLE_TOOLS in thefactory-tools/src/chats/chatsConstants.ts so the agent can call it from inside a story."
+  ],
+  "createdAt": "2026-05-29T00:00:00.000Z",
+  "updatedAt": "2026-05-29T00:00:00.000Z"
+}

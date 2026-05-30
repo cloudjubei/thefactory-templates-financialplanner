@@ -1,0 +1,13 @@
+{
+  "id": "5afd35f8-3362-41d7-a1f8-3de3fc4faf5a",
+  "title": "Periodic scouring for new investment opportunities",
+  "description": "On a recurring schedule (e.g. weekly), have the agent re-run a refined web search for new picks in the user's chosen investment domain and append or replace entries in data/top-picks.json. Notify the user when the panel changes so they know to come back.",
+  "status": "?",
+  "features": [],
+  "blockers": [
+    "Needs a scheduler / cron tool for agent runs.",
+    "Depends on the web-search exposure from the LLM-powered web search story."
+  ],
+  "createdAt": "2026-05-29T00:00:00.000Z",
+  "updatedAt": "2026-05-29T00:00:00.000Z"
+}

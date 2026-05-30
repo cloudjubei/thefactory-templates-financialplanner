@@ -1,0 +1,30 @@
+{
+  "id": "e3958adf-339d-40df-b788-20fe39c420c8",
+  "title": "Tailor the planner to your investment focus",
+  "description": "The planner ships with generic copy and three sample ETF holdings. Run the feature below to tell the agent what you actually want to focus on (\"tech ETFs\", \"dividend stocks\", \"renewable energy\", etc.) and watch the welcome heading, the sample holdings, and the Top Picks panel get rewritten for that focus. Small, fast, and a good first taste of what every later story does — the agent edits files in this repo, and the App view refreshes.",
+  "status": "-",
+  "features": [
+    {
+      "id": "ab124f63-5b30-45f3-9e7d-4848d2f497f6",
+      "title": "Personalize for your investment domain",
+      "description": "Ask the user (or read from the chat input) what their investment focus is. Then make small edits so the App view reflects that focus on the next refresh:\n\n1. data/config.json — set `investmentDomain` to the chosen domain string, and rewrite `welcomeHeading` to a short phrase that references it (e.g. for \"tech ETFs\": \"Tech ETFs, made yours\"). Optionally also rewrite `welcomeSubheading` to drop the \"Personalize via the first story\" hint once it's been personalized.\n2. data/sample-holdings.json — replace the three generic Vanguard ETFs with three plausible holdings in the chosen domain. Use realistic round numbers for `quantity`, `costBasis`, `currentValue`. No external lookup — author them from your own knowledge.\n3. data/top-picks.json — replace the empty array with three entries of shape `{ symbol, name, reason }`. The `reason` is one sentence and renders as the subtitle on each card.\n\nDo not touch app.js, index.html, or style.css — the existing renderers pick up the new data on refresh.",
+      "status": "-",
+      "context": [
+        "data/config.json",
+        "data/sample-holdings.json",
+        "data/top-picks.json",
+        "index.html",
+        "app.js"
+      ],
+      "acceptance": "After the feature completes, the App view shows: (a) a welcome heading that mentions the chosen domain; (b) a holdings table with three rows in that domain; (c) a Top Picks panel with three populated cards (no longer the empty-state CTA).",
+      "blockers": [],
+      "createdAt": "2026-05-29T00:00:00.000Z",
+      "updatedAt": "2026-05-29T00:00:00.000Z"
+    }
+  ],
+  "featureIdToDisplayIndex": {
+    "ab124f63-5b30-45f3-9e7d-4848d2f497f6": 0
+  },
+  "createdAt": "2026-05-29T00:00:00.000Z",
+  "updatedAt": "2026-05-29T00:00:00.000Z"
+}

@@ -1,0 +1,12 @@
+{
+  "id": "1ea1a168-dcdd-45a1-999c-297cdaed3ad6",
+  "title": "Live price fetching for the holdings tracker",
+  "description": "Replace the static `currentValue` numbers in data/sample-holdings.json with values fetched from a real price source on page load, so the holdings table reflects today's market. Will involve a small fetch (or a backend proxy if CORS becomes a problem), light caching, and an \"updated at\" indicator under the totals row.",
+  "status": "?",
+  "features": [],
+  "blockers": [
+    "Needs a price-data integration tool exposed to the agent (or a no-auth web-fetch surface) before the agent can author the fetch logic against a known endpoint. Today the agent has no way to call a price API."
+  ],
+  "createdAt": "2026-05-29T00:00:00.000Z",
+  "updatedAt": "2026-05-29T00:00:00.000Z"
+}

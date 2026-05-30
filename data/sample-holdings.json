@@ -1,0 +1,23 @@
+[
+  {
+    "symbol": "VOO",
+    "name": "Vanguard S&P 500 ETF",
+    "quantity": 10,
+    "costBasis": 4200,
+    "currentValue": 4850
+  },
+  {
+    "symbol": "VTI",
+    "name": "Vanguard Total Stock Market ETF",
+    "quantity": 5,
+    "costBasis": 1100,
+    "currentValue": 1280
+  },
+  {
+    "symbol": "BND",
+    "name": "Vanguard Total Bond Market ETF",
+    "quantity": 20,
+    "costBasis": 1600,
+    "currentValue": 1560
+  }
+]

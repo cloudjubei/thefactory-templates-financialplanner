@@ -84,12 +84,14 @@ The repo is a plain static web app plus a seeded `.factory/` tree. Standalone-ru
 
 ### B.2 `.factory/` seed content
 
-On-disk format mirrors the existing in-project layout used by [overseer-local/.factory/](../../overseer-local/.factory/) (flat: `project.json` + `stories/<uuid>.json` + `stories/order.json`).
+The template ships its seed at the **off-canonical** path `.factory/template/...`. It is deliberately *not* under `.factory/projects/<id>/` (the canonical project layout per [ProjectStorage.ts](../../thefactory-tools/src/storage/ProjectStorage.ts)) so it's impossible to mistake a template seed for a registered project, and so all templates follow the same easy-to-grep pattern. The from-template route copies these files into the canonical `.factory/projects/<user-id>/` location post-clone (see §C.2).
 
-- `.factory/project.json` — `{ title, description, repo_url: "", scopeGroupIds: [], createdAt, updatedAt }`. This is the project's **canonical** config (per §A → Decided). The `from-template` route reads it post-clone and passes its values through to `createProject` (project.json on disk effectively unchanged); user customizations later route to `registry.overrides`, not back here.
-- `.factory/manifest.json` — `{}`. Empty by design in v1. The file's *presence* establishes the convention so future template versions can declare `menuEntries`, `theme`, `defaultChats`, etc. (per §A → Deferred integration seams). Overseer ignores its contents until the host-side renderer ships.
-- `.factory/stories/order.json` — object form `{ ids: [storyId1, ...], updatedAt }` (new format; the read-side migration handles legacy flat-array). Lists Story 1 first, then the three blocked roadmap stories.
-- `.factory/stories/<uuid>.json` — one file per story. Story shape per [thefactory-tools/src/story/storyTypes.ts](../../thefactory-tools/src/story/storyTypes.ts) (`Story` / `Feature`). Include the `featureIdToDisplayIndex` map alongside `features` to match the on-disk precedent.
+- `.factory/template/project.json` — `{ title, description, repo_url: "", scopeGroupIds: [], createdAt, updatedAt }`. This is the project's **canonical** config (per §A → Decided). The from-template route reads it for `title` / `description` / `codeInfo` / `scopeGroupIds` and passes those values through to `createProject`; user customizations later route to `registry.overrides`, not back here.
+- `.factory/template/manifest.json` — `{}`. Empty by design in v1. The file's *presence* establishes the convention so future template versions can declare `menuEntries`, `theme`, `defaultChats`, etc. (per §A → Deferred integration seams). Overseer ignores its contents until the host-side renderer ships.
+- `.factory/template/stories/order.json` — object form `{ ids: [storyId1, ...], updatedAt }`. Lists Story 1 first, then the three blocked roadmap stories.
+- `.factory/template/stories/<uuid>.json` — one file per story. Story shape per [thefactory-tools/src/story/storyTypes.ts](../../thefactory-tools/src/story/storyTypes.ts) (`Story` / `Feature`). Include the `featureIdToDisplayIndex` map alongside `features` to match the on-disk precedent.
+
+The directory name `template` is the cross-template convention — every Overseer template ships its seed here. Detection in the from-template route is structural ("does `.factory/template/project.json` exist?"), not name-matching against a wider set.
 
 ### B.3 Story 1 — Tailor to your investment focus (the "first runnable" feature)
 
@@ -113,8 +115,8 @@ One file each. Status `?` (blocked). `blockers` array names the external trigger
 
 ### B.5 Verification
 
-- Open [index.html](../index.html) directly in a browser → all three sections render with the seeded data; calculator chart updates as inputs change.
-- Run `python3 -m http.server` from the repo root → same, served over HTTP (closer to how the backend will serve it).
+- Run `python3 -m http.server 8000` from the repo root and open http://localhost:8000 → all three sections render with the seeded data; calculator chart updates as inputs change; holdings totals match (Total $7,690, P&L +$430 / +5.9%).
+- (Opening `index.html` directly via `file://` won't work — browsers block `fetch()` from `file://`. A friendly error banner explains this; the user-visible fix is "use a local HTTP server.")
 - Static-validate the four JSON files in `.factory/` parse as `Story` / `StoryOrderRecord` / `ProjectConfig`.
 
 ---
@@ -168,20 +170,21 @@ New handler in [thefactory-backend/src/routes/projects.ts](../../thefactory-back
 
 Body: `{ templateId: string, id: string, path: string, mainGroupId?: string }`. **No `title` / `description` / `repo_url`** — the template's `.factory/project.json` is canonical (per §A "Decided"); `repo_url` is forced to `''` (per §A "Decided — From-template is local-only").
 
-Logic:
+Logic (order matters — the install of the canonical project layout happens **before** the single initial commit so the user's git history starts pristine):
 
 1. Resolve `templateId` against `TEMPLATES`; 404 if absent.
-2. `projectCheckoutService.cloneIntoCheckout(body.path, template.repoUrl)` — same primitive as the existing `kind: 'clone'` checkout path at [projects.ts:518](../../thefactory-backend/src/routes/projects.ts#L518).
-3. **Wipe git history.** Inside the cloned dir: `rm -rf .git`, then `git init`, `git add .`, `git commit -m "Initialize from <template.name> template"`. New helper `projectCheckoutService.reinitWithSingleCommit(path, message)`; co-located test.
-4. **Read the cloned `.factory/project.json`** → `templateConfig: ProjectConfig`. Fail with a clear 422 if the file is missing or doesn't validate (template authoring bug; surface loudly rather than papering over).
-5. Call `projectTools.createProject({ id: body.id, path: body.path, title: templateConfig.title, description: templateConfig.description, repo_url: '', codeInfo: templateConfig.codeInfo, scopeGroupIds: templateConfig.scopeGroupIds ?? [], mainGroupId: body.mainGroupId, overrides: {} })`. Net effect: project.json on disk matches the template's; registry.json gets a fresh entry for this client with no overrides yet.
-6. **Skip `buildSeedFiles`** entirely — the template ships its own README and `.factory/` content; the existing seed (README.md + `.factory/stories/.gitkeep`) would clobber it.
-7. Return the resulting `ProjectSpec` (with `applyProjectOverrides` already applied).
+2. `projectCheckoutService.cloneIntoCheckout(body.path, template.repoUrl)` — same primitive as the existing `kind: 'clone'` checkout path at [projects.ts:518](../../thefactory-backend/src/routes/projects.ts#L518). The clone arrives with `.factory/template/` and no `.factory/projects/<id>/`.
+3. **Read the template's project config** at `<body.path>/.factory/template/project.json` → `templateConfig: ProjectConfig`. Fail with a clear 422 if the file is missing or doesn't validate (template authoring bug; surface loudly rather than papering over).
+4. **Install the canonical project layout.** Move `<body.path>/.factory/template/*` → `<body.path>/.factory/projects/<body.id>/*` and remove the now-empty `.factory/template/` directory. New helper `projectCheckoutService.installTemplateProjectLayout(path, newId)`; co-located test. After this step, the on-disk layout matches what `ProjectStorage` expects.
+5. **Wipe git history + single initial commit.** Inside the cloned dir: `rm -rf .git`, then `git init`, `git add .`, `git commit -m "Initialize from <template.name> template"`. New helper `projectCheckoutService.reinitWithSingleCommit(path, message)`; co-located test. Running this AFTER step 4 means the user's initial commit already has the canonical project layout — no follow-up "rename template seed" commit polluting history.
+6. Call `projectTools.createProject({ id: body.id, path: body.path, title: templateConfig.title, description: templateConfig.description, repo_url: '', codeInfo: templateConfig.codeInfo, scopeGroupIds: templateConfig.scopeGroupIds ?? [], mainGroupId: body.mainGroupId, overrides: {}, dataLocation: 'inProject' })`. `dataLocation: 'inProject'` keeps `.factory/projects/<id>/` in the user's repo (where step 4 just put it) and writes only the registry entry to `centralRoot`. Net effect: project.json on disk matches the template's; registry.json (central) gets a fresh entry for this client with no overrides yet.
+7. **Skip `buildSeedFiles`** entirely — the template ships its own README, `.factory/template/`, and app files; the existing seed (README.md + `.factory/projects/<id>/stories/.gitkeep`) would clobber it.
+8. Return the resulting `ProjectSpec` (with `applyProjectOverrides` already applied).
 
 Integration test in `projects.integration.test.ts` (a sibling of the existing `kind=clone` test at [projects.integration.test.ts:647](../../thefactory-backend/src/routes/projects.integration.test.ts#L647)):
-- Mock `cloneIntoCheckout` + `reinitWithSingleCommit` + a fixture `.factory/project.json` read + `createProject`. Assert the call sequence; assert `createProject` receives the template's title/description (not the request body's); assert `repo_url: ''`.
+- Mock `cloneIntoCheckout` + `installTemplateProjectLayout` + `reinitWithSingleCommit` + a fixture `.factory/template/project.json` read + `createProject`. Assert the call sequence (note: install → reinit → createProject, not reinit → install); assert `createProject` receives the template's title/description (not the request body's); assert `repo_url: ''`, `dataLocation: 'inProject'`.
 - 404 when `templateId` is unknown.
-- 422 when the cloned `.factory/project.json` is missing or malformed.
+- 422 when the cloned `.factory/template/project.json` is missing or malformed.
 - 409 when checkout path is already a git repo (reuse the existing `CheckoutAlreadyGitRepoError` translation).
 
 ### C.3 `GET /api/v1/projects/:id/view/*` (operation `viewProjectFile`)

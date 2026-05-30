@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Investment Planner</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <header class="hero">
+      <p class="brand">Investment Planner</p>
+      <h1 id="welcome-heading">Investing made yours</h1>
+      <p id="welcome-subheading" class="subheading">Personalize this app by running the first story.</p>
+    </header>
+
+    <main class="grid">
+      <section class="card calculator" aria-labelledby="calc-h">
+        <h2 id="calc-h">Investment Calculator</h2>
+        <form id="calc-form" class="calc-form" autocomplete="off">
+          <label>
+            <span>Principal</span>
+            <span class="input-wrap">
+              <span class="prefix">$</span>
+              <input type="number" id="calc-principal" value="10000" min="0" step="100" />
+            </span>
+          </label>
+          <label>
+            <span>Monthly contribution</span>
+            <span class="input-wrap">
+              <span class="prefix">$</span>
+              <input type="number" id="calc-monthly" value="500" min="0" step="50" />
+            </span>
+          </label>
+          <label>
+            <span>Expected annual return</span>
+            <span class="input-wrap">
+              <input type="number" id="calc-return" value="7" min="0" max="50" step="0.1" />
+              <span class="suffix">%</span>
+            </span>
+          </label>
+          <label>
+            <span>Years</span>
+            <span class="input-wrap">
+              <input type="number" id="calc-years" value="20" min="1" max="60" step="1" />
+            </span>
+          </label>
+        </form>
+        <p class="projection">
+          <span class="projection-label">Projected value</span>
+          <span id="calc-projection" class="projection-value">—</span>
+        </p>
+        <div class="chart-wrap">
+          <canvas id="calc-chart" aria-label="Projected balance over time"></canvas>
+        </div>
+      </section>
+
+      <section class="card top-picks" aria-labelledby="picks-h">
+        <h2 id="picks-h">Top picks</h2>
+        <div id="top-picks-body" class="top-picks-empty">
+          <p>Personalize via the first story to see picks tailored to your investment focus.</p>
+        </div>
+      </section>
+
+      <section class="card holdings" aria-labelledby="holdings-h">
+        <h2 id="holdings-h">Your holdings</h2>
+        <div class="table-wrap">
+          <table id="holdings-table">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Name</th>
+                <th class="num">Qty</th>
+                <th class="num">Cost basis</th>
+                <th class="num">Current</th>
+              </tr>
+            </thead>
+            <tbody id="holdings-body"></tbody>
+          </table>
+        </div>
+        <p class="holdings-totals">
+          <span>Total: <strong id="holdings-total">$0</strong></span>
+          <span>P&amp;L: <strong id="holdings-pnl">$0 (0%)</strong></span>
+        </p>
+      </section>
+    </main>
+  </body>
+</html>
