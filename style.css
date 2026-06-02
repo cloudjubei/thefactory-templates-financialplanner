@@ -1,57 +1,79 @@
 :root {
-  --bg: #f7f8fa;
+  --bg: #f4f6fb;
   --surface: #ffffff;
-  --text: #1f2933;
+  --text: #111827;
   --muted: #6b7280;
-  --border: #e5e7eb;
+  --border: #e6e8ee;
   --accent: #2563eb;
-  --accent-soft: rgba(37, 99, 235, 0.12);
+  --accent-strong: #1d4ed8;
+  --accent-soft: rgba(37, 99, 235, 0.1);
+  --growth: #0ea5a4;
+  --growth-soft: rgba(14, 165, 164, 0.14);
   --positive: #16a34a;
   --negative: #dc2626;
-  --radius: 12px;
-  --shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.05);
+  --radius: 14px;
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 6px 20px rgba(15, 23, 42, 0.06);
   --gap: 20px;
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 
-html, body {
+html,
+body {
   margin: 0;
   padding: 0;
+  /* The holdings table scrolls horizontally inside .table-wrap; the page
+     itself should never scroll sideways (esp. inside the mobile WebView). */
+  overflow-x: hidden;
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  background: var(--bg);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  background: linear-gradient(180deg, #eef2fb 0%, var(--bg) 220px);
   color: var(--text);
   line-height: 1.45;
-  padding: 24px;
+  padding: 28px 24px 40px;
   max-width: 1080px;
   margin-inline: auto;
 }
 
+/* ---- Hero ---------------------------------------------------------------- */
+
 .hero {
-  margin-bottom: var(--gap);
+  margin-bottom: 24px;
 }
 
 .brand {
-  color: var(--muted);
-  font-size: 13px;
-  letter-spacing: 0.06em;
+  display: inline-block;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
-  margin: 0 0 6px;
+  margin: 0 0 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
 }
 
 .hero h1 {
-  font-size: clamp(28px, 5vw, 40px);
-  margin: 0 0 6px;
-  line-height: 1.1;
+  font-size: clamp(28px, 5vw, 42px);
+  margin: 0 0 8px;
+  line-height: 1.08;
+  letter-spacing: -0.02em;
 }
 
 .subheading {
   margin: 0;
   color: var(--muted);
+  font-size: 16px;
 }
+
+/* ---- Grid + cards -------------------------------------------------------- */
 
 .grid {
   display: grid;
@@ -61,7 +83,7 @@ body {
 
 @media (min-width: 768px) {
   .grid {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1.3fr 1fr;
   }
   .holdings {
     grid-column: 1 / -1;
@@ -73,17 +95,47 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  padding: 20px;
+  padding: 22px;
+  /* Grid/flex items default to min-width:auto, which lets a wide child (the
+     holdings table) push the card past the viewport. Pin to 0 so the card
+     stays within its track and the table scrolls inside .table-wrap instead. */
+  min-width: 0;
 }
 
-.card h2 {
-  margin: 0 0 16px;
-  font-size: 18px;
+.card-head {
+  margin-bottom: 18px;
 }
+
+.card-head h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+  position: relative;
+  padding-left: 12px;
+}
+
+.card-head h2::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 2px;
+  bottom: 2px;
+  width: 4px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.card-sub {
+  margin: 6px 0 0 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ---- Calculator ---------------------------------------------------------- */
 
 .calc-form {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .calc-form label {
@@ -99,23 +151,32 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg);
+  padding: 0 10px;
+  transition:
+    border-color 0.12s,
+    box-shadow 0.12s;
+}
+
+.input-wrap:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .calc-form input {
   font: inherit;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
+  padding: 9px 2px;
+  border: 0;
+  background: transparent;
   color: var(--text);
   width: 120px;
   text-align: right;
 }
 
 .calc-form input:focus {
-  outline: 2px solid var(--accent-soft);
-  outline-offset: 1px;
-  border-color: var(--accent);
+  outline: none;
 }
 
 .prefix,
@@ -124,41 +185,70 @@ body {
   font-size: 13px;
 }
 
-.projection {
-  margin: 18px 0 12px;
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 20px 0 14px;
+}
+
+.stat {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.projection-label {
+.stat-primary {
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+
+.stat-label {
+  font-size: 12px;
   color: var(--muted);
-  font-size: 14px;
 }
 
-.projection-value {
-  font-size: 26px;
-  font-weight: 600;
-  color: var(--accent);
+.stat-value {
+  font-size: clamp(16px, 2.4vw, 22px);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.stat-primary .stat-value {
+  color: var(--accent-strong);
+}
+
+.stat-growth {
+  color: var(--growth);
 }
 
 .chart-wrap {
   position: relative;
-  height: 200px;
+  height: 220px;
 }
 
+/* ---- Top picks ----------------------------------------------------------- */
+
 .top-picks-empty {
-  padding: 24px;
+  padding: 28px 20px;
   border: 1px dashed var(--border);
-  border-radius: 8px;
+  border-radius: 12px;
   color: var(--muted);
   text-align: center;
 }
 
+.empty-emoji {
+  font-size: 26px;
+  margin: 0 0 8px;
+}
+
 .top-picks-list {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -167,20 +257,30 @@ body {
 .top-picks-list li {
   display: grid;
   gap: 4px;
-  padding: 12px;
+  padding: 13px 14px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 11px;
   background: var(--bg);
+  transition:
+    border-color 0.12s,
+    transform 0.12s;
+}
+
+.top-picks-list li:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
 }
 
 .pick-symbol {
-  font-weight: 600;
+  font-weight: 650;
 }
 
 .pick-reason {
   color: var(--muted);
   font-size: 14px;
 }
+
+/* ---- Holdings ------------------------------------------------------------ */
 
 .table-wrap {
   overflow-x: auto;
@@ -194,33 +294,148 @@ body {
 
 .holdings th,
 .holdings td {
-  padding: 10px 8px;
+  padding: 11px 10px;
   border-bottom: 1px solid var(--border);
   text-align: left;
+}
+
+.holdings tbody tr:last-child td {
+  border-bottom: 0;
 }
 
 .holdings th {
   font-weight: 600;
   color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 .holdings .num {
   text-align: right;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.holdings .sym {
+  font-weight: 650;
 }
 
 .holdings-totals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.total-cell {
   display: flex;
-  gap: 24px;
-  justify-content: flex-end;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.total-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.total-cell strong {
+  font-size: 17px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.pnl-positive {
+  color: var(--positive);
+}
+
+.pnl-negative {
+  color: var(--negative);
+}
+
+/* ---- Footer -------------------------------------------------------------- */
+
+.page-foot {
+  margin-top: 28px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+@media (max-width: 600px) {
+  body {
+    padding: 20px 14px 32px;
+  }
+  .card {
+    padding: 16px;
+  }
+  /* Two-up keeps the stats compact without forcing a wide row. */
+  .stat-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .stat-primary {
+    grid-column: 1 / -1;
+  }
+  .holdings-totals {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---- Add / remove holdings ---------------------------------------------- */
+.add-holding {
+  display: flex;
   flex-wrap: wrap;
-  margin-top: 12px;
-  font-size: 14px;
+  gap: 8px;
+  margin-top: 14px;
 }
-
-.holdings-totals strong {
+.add-holding input {
+  flex: 1 1 120px;
+  min-width: 0;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+.add-holding input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.add-holding button {
+  flex: 0 0 auto;
+  padding: 8px 16px;
+  font: inherit;
   font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
 }
-
-.pnl-positive { color: var(--positive); }
-.pnl-negative { color: var(--negative); }
+.add-holding button:hover {
+  background: var(--accent-strong);
+}
+td.row-actions {
+  text-align: right;
+}
+.remove-holding {
+  width: 24px;
+  height: 24px;
+  line-height: 1;
+  font-size: 16px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.remove-holding:hover {
+  color: var(--negative);
+  border-color: var(--negative);
+}

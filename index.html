@@ -5,66 +5,129 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Investment Planner</title>
     <link rel="stylesheet" href="style.css" />
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
+      defer
+    ></script>
+    <script src="bridge.js" defer></script>
     <script src="app.js" defer></script>
   </head>
   <body>
     <header class="hero">
       <p class="brand">Investment Planner</p>
       <h1 id="welcome-heading">Investing made yours</h1>
-      <p id="welcome-subheading" class="subheading">Personalize this app by running the first story.</p>
+      <p id="welcome-subheading" class="subheading">
+        Personalize this app by running the first story.
+      </p>
     </header>
 
     <main class="grid">
       <section class="card calculator" aria-labelledby="calc-h">
-        <h2 id="calc-h">Investment Calculator</h2>
+        <div class="card-head">
+          <h2 id="calc-h">Investment Calculator</h2>
+          <p class="card-sub">
+            Project the growth of regular contributions over time.
+          </p>
+        </div>
+
         <form id="calc-form" class="calc-form" autocomplete="off">
           <label>
-            <span>Principal</span>
+            <span>Starting amount</span>
             <span class="input-wrap">
               <span class="prefix">$</span>
-              <input type="number" id="calc-principal" value="10000" min="0" step="100" />
+              <input
+                type="number"
+                id="calc-principal"
+                value="10000"
+                min="0"
+                step="100"
+              />
             </span>
           </label>
           <label>
             <span>Monthly contribution</span>
             <span class="input-wrap">
               <span class="prefix">$</span>
-              <input type="number" id="calc-monthly" value="500" min="0" step="50" />
+              <input
+                type="number"
+                id="calc-monthly"
+                value="500"
+                min="0"
+                step="50"
+              />
             </span>
           </label>
           <label>
             <span>Expected annual return</span>
             <span class="input-wrap">
-              <input type="number" id="calc-return" value="7" min="0" max="50" step="0.1" />
+              <input
+                type="number"
+                id="calc-return"
+                value="7"
+                min="0"
+                max="50"
+                step="0.1"
+              />
               <span class="suffix">%</span>
             </span>
           </label>
           <label>
             <span>Years</span>
             <span class="input-wrap">
-              <input type="number" id="calc-years" value="20" min="1" max="60" step="1" />
+              <input
+                type="number"
+                id="calc-years"
+                value="20"
+                min="1"
+                max="60"
+                step="1"
+              />
             </span>
           </label>
         </form>
-        <p class="projection">
-          <span class="projection-label">Projected value</span>
-          <span id="calc-projection" class="projection-value">—</span>
-        </p>
+
+        <div class="stat-row">
+          <div class="stat stat-primary">
+            <span class="stat-label">Projected value</span>
+            <span id="calc-projection" class="stat-value">—</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">You invest</span>
+            <span id="calc-invested" class="stat-value">—</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Growth</span>
+            <span id="calc-growth" class="stat-value stat-growth">—</span>
+          </div>
+        </div>
+
         <div class="chart-wrap">
-          <canvas id="calc-chart" aria-label="Projected balance over time"></canvas>
+          <canvas
+            id="calc-chart"
+            aria-label="Projected balance over time, split into contributions and growth"
+          ></canvas>
         </div>
       </section>
 
       <section class="card top-picks" aria-labelledby="picks-h">
-        <h2 id="picks-h">Top picks</h2>
+        <div class="card-head">
+          <h2 id="picks-h">Top picks</h2>
+          <p class="card-sub">Ideas tailored to your investment focus.</p>
+        </div>
         <div id="top-picks-body" class="top-picks-empty">
-          <p>Personalize via the first story to see picks tailored to your investment focus.</p>
+          <p class="empty-emoji" aria-hidden="true">✨</p>
+          <p>
+            Run the first story to fill this with picks tailored to your
+            investment focus.
+          </p>
         </div>
       </section>
 
       <section class="card holdings" aria-labelledby="holdings-h">
-        <h2 id="holdings-h">Your holdings</h2>
+        <div class="card-head">
+          <h2 id="holdings-h">Your holdings</h2>
+          <p class="card-sub">A snapshot of what you currently own.</p>
+        </div>
         <div class="table-wrap">
           <table id="holdings-table">
             <thead>
@@ -74,16 +137,65 @@
                 <th class="num">Qty</th>
                 <th class="num">Cost basis</th>
                 <th class="num">Current</th>
+                <th class="num">Gain / Loss</th>
+                <th aria-label="Remove"></th>
               </tr>
             </thead>
             <tbody id="holdings-body"></tbody>
           </table>
         </div>
-        <p class="holdings-totals">
-          <span>Total: <strong id="holdings-total">$0</strong></span>
-          <span>P&amp;L: <strong id="holdings-pnl">$0 (0%)</strong></span>
-        </p>
+        <form id="add-holding" class="add-holding" autocomplete="off">
+          <input
+            name="symbol"
+            placeholder="Symbol"
+            required
+            maxlength="12"
+            aria-label="Symbol"
+          />
+          <input name="name" placeholder="Name" aria-label="Name" />
+          <input
+            name="quantity"
+            type="number"
+            step="any"
+            placeholder="Qty"
+            aria-label="Quantity"
+          />
+          <input
+            name="costBasis"
+            type="number"
+            step="any"
+            placeholder="Cost basis"
+            aria-label="Cost basis"
+          />
+          <input
+            name="currentValue"
+            type="number"
+            step="any"
+            placeholder="Current"
+            aria-label="Current value"
+          />
+          <button type="submit">Add holding</button>
+        </form>
+        <div class="holdings-totals">
+          <div class="total-cell">
+            <span class="total-label">Total value</span>
+            <strong id="holdings-total">$0</strong>
+          </div>
+          <div class="total-cell">
+            <span class="total-label">Total cost</span>
+            <strong id="holdings-cost">$0</strong>
+          </div>
+          <div class="total-cell">
+            <span class="total-label">Total P&amp;L</span>
+            <strong id="holdings-pnl">$0 (0%)</strong>
+          </div>
+        </div>
       </section>
     </main>
+
+    <footer class="page-foot">
+      Built from the Overseer <strong>Investment Planner</strong> template —
+      sculpt it into your own with stories.
+    </footer>
   </body>
 </html>
