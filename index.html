@@ -13,224 +13,285 @@
     <script src="app.js" defer></script>
   </head>
   <body>
-    <header class="hero">
+    <header class="appbar">
       <p class="brand">Investment Planner</p>
-      <h1 id="welcome-heading">Investing made yours</h1>
-      <p id="welcome-subheading" class="subheading">
-        Personalize this app by running the first story.
-      </p>
+      <label class="country-picker">
+        <span>Country</span>
+        <select id="country-select" aria-label="Your country"></select>
+      </label>
     </header>
 
-    <main class="grid">
-      <section class="card calculator" aria-labelledby="calc-h">
-        <div class="card-head">
-          <h2 id="calc-h">Investment Calculator</h2>
-          <p class="card-sub">
-            Project the growth of regular contributions over time.
-          </p>
-        </div>
+    <nav class="tabbar" id="tabbar" role="tablist" aria-label="Sections"></nav>
 
-        <form id="calc-form" class="calc-form" autocomplete="off">
-          <label>
-            <span>Starting amount</span>
-            <span class="input-wrap">
-              <span class="prefix">$</span>
-              <input
-                type="number"
-                id="calc-principal"
-                value="10000"
-                min="0"
-                step="100"
-              />
-            </span>
-          </label>
-          <label>
-            <span>Monthly contribution</span>
-            <span class="input-wrap">
-              <span class="prefix">$</span>
-              <input
-                type="number"
-                id="calc-monthly"
-                value="500"
-                min="0"
-                step="50"
-              />
-            </span>
-          </label>
-          <label>
-            <span>Expected annual return</span>
-            <span class="input-wrap">
-              <input
-                type="number"
-                id="calc-return"
-                value="7"
-                min="0"
-                max="50"
-                step="0.1"
-              />
-              <span class="suffix">%</span>
-            </span>
-          </label>
-          <label>
-            <span>Years</span>
-            <span class="input-wrap">
-              <input
-                type="number"
-                id="calc-years"
-                value="20"
-                min="1"
-                max="60"
-                step="1"
-              />
-            </span>
-          </label>
-        </form>
-
-        <div class="stat-row">
-          <div class="stat stat-primary">
-            <span class="stat-label">Projected value</span>
-            <span id="calc-projection" class="stat-value">—</span>
-          </div>
-          <div class="stat">
-            <span class="stat-label">You invest</span>
-            <span id="calc-invested" class="stat-value">—</span>
-          </div>
-          <div class="stat">
-            <span class="stat-label">Growth</span>
-            <span id="calc-growth" class="stat-value stat-growth">—</span>
-          </div>
-        </div>
-
-        <div class="chart-wrap">
-          <canvas
-            id="calc-chart"
-            aria-label="Projected balance over time, split into contributions and growth"
-          ></canvas>
-        </div>
-      </section>
-
-      <section class="card top-picks" aria-labelledby="picks-h">
-        <div class="card-head">
-          <h2 id="picks-h">Top picks</h2>
-          <p class="card-sub">Ideas tailored to your investment focus.</p>
-        </div>
-        <form id="profile-form" class="profile-form" hidden autocomplete="off">
-          <input
-            name="country"
-            placeholder="Country (e.g. PL)"
-            aria-label="Country"
-            maxlength="32"
-          />
-          <select name="risk" aria-label="Risk appetite">
-            <option value="cautious">Cautious</option>
-            <option value="balanced">Balanced</option>
-            <option value="adventurous">Adventurous</option>
-          </select>
-          <input
-            name="preferences"
-            placeholder="Interests (e.g. clean energy)"
-            aria-label="Interests"
-            maxlength="80"
-          />
-          <button type="button" id="find-opportunities">
-            Find opportunities
-          </button>
-        </form>
-        <p
-          id="opportunities-status"
-          class="opportunities-status"
-          role="status"
-        ></p>
-        <div id="top-picks-body" class="top-picks-empty">
-          <p class="empty-emoji" aria-hidden="true">✨</p>
+    <main class="tab-main">
+      <!-- Start (built in a later step) -->
+      <section id="tab-start" class="tab-panel" role="tabpanel" hidden>
+        <div class="card placeholder-card">
+          <h2>Start here</h2>
           <p>
-            Run the first story to fill this with picks tailored to your
-            investment focus.
+            A guided setup that turns "how much I have / can save each month"
+            and your interests into a starter plan and first proposals.
           </p>
+          <p class="placeholder-note">Coming in a later step.</p>
         </div>
       </section>
 
-      <section
-        class="card markets"
-        id="markets"
-        hidden
-        aria-labelledby="markets-h"
-      >
-        <div class="card-head">
-          <h2 id="markets-h">Live markets</h2>
-          <p class="card-sub">
-            Shared data your project subscribes to, refreshed automatically.
-          </p>
+      <!-- Profile -->
+      <section id="tab-profile" class="tab-panel" role="tabpanel" hidden>
+        <div class="card">
+          <div class="card-head">
+            <h2>Your profile</h2>
+            <p class="card-sub">Tune what we look for on your behalf.</p>
+          </div>
+          <form id="profile-form" class="profile-form" autocomplete="off">
+            <label class="field">
+              <span>Risk appetite</span>
+              <select name="risk">
+                <option value="cautious">Cautious</option>
+                <option value="balanced">Balanced</option>
+                <option value="adventurous">Adventurous</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Interests</span>
+              <input
+                name="preferences"
+                placeholder="e.g. clean energy"
+                maxlength="80"
+              />
+            </label>
+            <button type="submit">Save profile</button>
+          </form>
+          <p id="profile-status" class="form-status" role="status"></p>
         </div>
-        <div id="markets-body" class="markets-empty"></div>
       </section>
 
-      <section class="card holdings" aria-labelledby="holdings-h">
-        <div class="card-head">
-          <h2 id="holdings-h">Your holdings</h2>
-          <p class="card-sub">A snapshot of what you currently own.</p>
+      <!-- Proposals -->
+      <section id="tab-proposals" class="tab-panel" role="tabpanel" hidden>
+        <div class="card top-picks">
+          <div class="card-head">
+            <h2>Proposals</h2>
+            <p class="card-sub">
+              Ideas tailored to your country and investment focus.
+            </p>
+          </div>
+          <div class="proposals-actions">
+            <button type="button" id="find-opportunities">
+              Find opportunities
+            </button>
+          </div>
+          <p id="opportunities-status" class="form-status" role="status"></p>
+          <div id="top-picks-body" class="top-picks-empty">
+            <p class="empty-emoji" aria-hidden="true">✨</p>
+            <p>Set your profile, then "Find opportunities" to fill this in.</p>
+          </div>
         </div>
-        <div class="table-wrap">
-          <table id="holdings-table">
-            <thead>
-              <tr>
-                <th>Symbol</th>
-                <th>Name</th>
-                <th class="num">Qty</th>
-                <th class="num">Cost basis</th>
-                <th class="num">Current</th>
-                <th class="num">Gain / Loss</th>
-                <th aria-label="Remove"></th>
-              </tr>
-            </thead>
-            <tbody id="holdings-body"></tbody>
-          </table>
+      </section>
+
+      <!-- Portfolio -->
+      <section id="tab-portfolio" class="tab-panel" role="tabpanel" hidden>
+        <section
+          class="card markets"
+          id="markets"
+          hidden
+          aria-labelledby="markets-h"
+        >
+          <div class="card-head">
+            <h2 id="markets-h">Live market</h2>
+            <p class="card-sub">
+              Stocks in your selected country, refreshed automatically.
+            </p>
+          </div>
+          <div id="markets-body" class="markets-empty"></div>
+        </section>
+
+        <section class="card holdings" aria-labelledby="holdings-h">
+          <div class="card-head">
+            <h2 id="holdings-h">Your holdings</h2>
+            <p class="card-sub">A snapshot of what you currently own.</p>
+          </div>
+          <div class="table-wrap">
+            <table id="holdings-table">
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Name</th>
+                  <th class="num">Qty</th>
+                  <th class="num">Cost basis</th>
+                  <th class="num">Current</th>
+                  <th class="num">Gain / Loss</th>
+                  <th aria-label="Remove"></th>
+                </tr>
+              </thead>
+              <tbody id="holdings-body"></tbody>
+            </table>
+          </div>
+          <form id="add-holding" class="add-holding" autocomplete="off">
+            <input
+              name="symbol"
+              placeholder="Symbol"
+              required
+              maxlength="12"
+              aria-label="Symbol"
+            />
+            <input name="name" placeholder="Name" aria-label="Name" />
+            <input
+              name="quantity"
+              type="number"
+              step="any"
+              placeholder="Qty"
+              aria-label="Quantity"
+            />
+            <input
+              name="costBasis"
+              type="number"
+              step="any"
+              placeholder="Cost basis"
+              aria-label="Cost basis"
+            />
+            <input
+              name="currentValue"
+              type="number"
+              step="any"
+              placeholder="Current"
+              aria-label="Current value"
+            />
+            <button type="submit">Add holding</button>
+          </form>
+          <div class="holdings-totals">
+            <div class="total-cell">
+              <span class="total-label">Total value</span>
+              <strong id="holdings-total">—</strong>
+            </div>
+            <div class="total-cell">
+              <span class="total-label">Total cost</span>
+              <strong id="holdings-cost">—</strong>
+            </div>
+            <div class="total-cell">
+              <span class="total-label">Total P&amp;L</span>
+              <strong id="holdings-pnl">—</strong>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <!-- Forecast (built in a later step) -->
+      <section id="tab-forecast" class="tab-panel" role="tabpanel" hidden>
+        <div class="card placeholder-card">
+          <h2>Forecast</h2>
+          <p>Project what your current portfolio could become over time.</p>
+          <p class="placeholder-note">Coming in a later step.</p>
         </div>
-        <form id="add-holding" class="add-holding" autocomplete="off">
-          <input
-            name="symbol"
-            placeholder="Symbol"
-            required
-            maxlength="12"
-            aria-label="Symbol"
-          />
-          <input name="name" placeholder="Name" aria-label="Name" />
-          <input
-            name="quantity"
-            type="number"
-            step="any"
-            placeholder="Qty"
-            aria-label="Quantity"
-          />
-          <input
-            name="costBasis"
-            type="number"
-            step="any"
-            placeholder="Cost basis"
-            aria-label="Cost basis"
-          />
-          <input
-            name="currentValue"
-            type="number"
-            step="any"
-            placeholder="Current"
-            aria-label="Current value"
-          />
-          <button type="submit">Add holding</button>
-        </form>
-        <div class="holdings-totals">
-          <div class="total-cell">
-            <span class="total-label">Total value</span>
-            <strong id="holdings-total">$0</strong>
+      </section>
+
+      <!-- News (built in a later step) -->
+      <section id="tab-news" class="tab-panel" role="tabpanel" hidden>
+        <div class="card placeholder-card">
+          <h2>News</h2>
+          <p>Daily, curated news on the assets you hold.</p>
+          <p class="placeholder-note">Coming in a later step.</p>
+        </div>
+      </section>
+
+      <!-- Calculator -->
+      <section id="tab-calculator" class="tab-panel" role="tabpanel" hidden>
+        <section class="card calculator" aria-labelledby="calc-h">
+          <div class="card-head">
+            <h2 id="calc-h">Investment Calculator</h2>
+            <p class="card-sub">
+              Project the growth of regular contributions over time.
+            </p>
           </div>
-          <div class="total-cell">
-            <span class="total-label">Total cost</span>
-            <strong id="holdings-cost">$0</strong>
+
+          <form id="calc-form" class="calc-form" autocomplete="off">
+            <label>
+              <span>Starting amount</span>
+              <span class="input-wrap">
+                <span class="prefix currency-prefix">$</span>
+                <input
+                  type="number"
+                  id="calc-principal"
+                  value="10000"
+                  min="0"
+                  step="100"
+                />
+              </span>
+            </label>
+            <label>
+              <span>Monthly contribution</span>
+              <span class="input-wrap">
+                <span class="prefix currency-prefix">$</span>
+                <input
+                  type="number"
+                  id="calc-monthly"
+                  value="500"
+                  min="0"
+                  step="50"
+                />
+              </span>
+            </label>
+            <label>
+              <span>Expected annual return</span>
+              <span class="input-wrap">
+                <input
+                  type="number"
+                  id="calc-return"
+                  value="7"
+                  min="0"
+                  max="50"
+                  step="0.1"
+                />
+                <span class="suffix">%</span>
+              </span>
+            </label>
+            <label>
+              <span>Years</span>
+              <span class="input-wrap">
+                <input
+                  type="number"
+                  id="calc-years"
+                  value="20"
+                  min="1"
+                  max="60"
+                  step="1"
+                />
+              </span>
+            </label>
+          </form>
+
+          <div class="stat-row">
+            <div class="stat stat-primary">
+              <span class="stat-label">Projected value</span>
+              <span id="calc-projection" class="stat-value">—</span>
+            </div>
+            <div class="stat">
+              <span class="stat-label">You invest</span>
+              <span id="calc-invested" class="stat-value">—</span>
+            </div>
+            <div class="stat">
+              <span class="stat-label">Growth</span>
+              <span id="calc-growth" class="stat-value stat-growth">—</span>
+            </div>
           </div>
-          <div class="total-cell">
-            <span class="total-label">Total P&amp;L</span>
-            <strong id="holdings-pnl">$0 (0%)</strong>
+
+          <div class="chart-wrap">
+            <canvas
+              id="calc-chart"
+              aria-label="Projected balance over time, split into contributions and growth"
+            ></canvas>
           </div>
+        </section>
+      </section>
+
+      <!-- Home (built in a later step) -->
+      <section id="tab-home" class="tab-panel" role="tabpanel" hidden>
+        <div class="card placeholder-card">
+          <h2>Home</h2>
+          <p>
+            Your daily digest — what changed, what to act on, and new
+            opportunities the AI found.
+          </p>
+          <p class="placeholder-note">Coming in a later step.</p>
         </div>
       </section>
     </main>

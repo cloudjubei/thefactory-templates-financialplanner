@@ -41,54 +41,7 @@ body {
   margin-inline: auto;
 }
 
-/* ---- Hero ---------------------------------------------------------------- */
-
-.hero {
-  margin-bottom: 24px;
-}
-
-.brand {
-  display: inline-block;
-  color: var(--accent-strong);
-  background: var(--accent-soft);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  margin: 0 0 12px;
-  padding: 4px 10px;
-  border-radius: 999px;
-}
-
-.hero h1 {
-  font-size: clamp(28px, 5vw, 42px);
-  margin: 0 0 8px;
-  line-height: 1.08;
-  letter-spacing: -0.02em;
-}
-
-.subheading {
-  margin: 0;
-  color: var(--muted);
-  font-size: 16px;
-}
-
-/* ---- Grid + cards -------------------------------------------------------- */
-
-.grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: var(--gap);
-}
-
-@media (min-width: 768px) {
-  .grid {
-    grid-template-columns: 1.3fr 1fr;
-  }
-  .holdings {
-    grid-column: 1 / -1;
-  }
-}
+/* ---- Cards --------------------------------------------------------------- */
 
 .card {
   background: var(--surface);
@@ -481,17 +434,110 @@ td.num.is-live {
   color: var(--growth);
 }
 
-/* ---- Opportunity profile form -------------------------------------------- */
-.profile-form {
+/* ---- Multi-tab shell ----------------------------------------------------- */
+.appbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 12px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.appbar .brand {
+  margin: 0;
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--text);
+}
+.country-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.country-picker select {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+.tabbar {
+  position: sticky;
+  top: 53px;
+  z-index: 4;
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  -webkit-overflow-scrolling: touch;
+}
+.tab-btn {
+  flex: 0 0 auto;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tab-btn:hover {
+  background: var(--accent-soft);
+}
+.tab-btn.is-active {
+  background: var(--accent);
+  color: #fff;
+}
+.tab-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  width: 100%;
+  max-width: 920px;
+  margin: 0 auto;
+}
+.tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.tab-panel[hidden] {
+  display: none;
+}
+.placeholder-card {
+  text-align: center;
+}
+.placeholder-note {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ---- Profile form + status ----------------------------------------------- */
+.profile-form .field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.profile-form .field > span {
+  font-size: 13px;
+  color: var(--muted);
 }
 .profile-form input,
 .profile-form select {
-  flex: 1 1 120px;
-  min-width: 0;
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -499,22 +545,26 @@ td.num.is-live {
   color: var(--text);
   font: inherit;
 }
-.profile-form button {
-  flex: 0 0 auto;
+.profile-form button,
+.proposals-actions button {
   padding: 8px 14px;
   border: 0;
   border-radius: 8px;
-  background: var(--accent, #2563eb);
+  background: var(--accent);
   color: #fff;
   font-weight: 600;
   cursor: pointer;
 }
-.profile-form button:disabled {
+.profile-form button:disabled,
+.proposals-actions button:disabled {
   opacity: 0.6;
   cursor: default;
 }
-.opportunities-status {
-  margin: 0 0 12px;
+.proposals-actions {
+  margin-bottom: 8px;
+}
+.form-status {
+  margin: 8px 0 0;
   font-size: 13px;
   color: var(--muted);
   min-height: 1em;

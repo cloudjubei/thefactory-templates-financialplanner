@@ -50,67 +50,76 @@ Left-to-right ≈ the new-user journey; **Home** is the daily landing once the u
 | **Proposals**  | `opportunity`/`latest` (read)        | on-demand `research()` (shipped; evolved prompt)      |
 | **Portfolio**  | `holding` CRUD + `live-data.read`    | none                                                  |
 | **Forecast**   | reads `holding` + `profile`          | none — pure client math                               |
-| **News**       | `news`/`<asset>` (read)              | scheduled (daily) + on-demand `research()`, per asset |
+| **News**       | `news`/`<asset>` (read)              | **Stage 4** — dedicated phase (built last)            |
 | **Calculator** | none                                 | none (the existing calculator, moved here)            |
-| **Home** (3.3) | reads all + `advice`/`latest`        | scheduled (daily) + on-demand advisor `research()`    |
+| **Home**       | reads all + `advice`/`latest`        | on open if >24h stale + manual (advisor `research()`) |
 
-**Default tab is derived from records** (never a stored onboarding flag): no profile + no holdings → **Start**; matured (profile + ≥1 holding) + Home enabled → **Home**; profile but no holdings → **Proposals**; else **Portfolio**. Start hides itself once matured (re-openable from Profile). Per-tab "done" is derived from record existence (drives a progress stepper). A **country toggle** at the top (= `profile.country`) swaps the live market the project is subscribed to + the app's currency (one country concept — the "company-stocks dropdown" is the same toggle re-subscribing).
+**Default tab is derived from records** (never a stored onboarding flag): no profile + no holdings → **Start**; matured (profile + ≥1 holding) + Home enabled → **Home**; profile but no holdings → **Proposals**; else **Portfolio**. Start hides itself once matured (re-openable from Profile). Per-tab "done" is derived from record existence (drives a progress stepper). A **country toggle** at the top writes `profile.country`; the app then **filters** its subscribed live records to that country's market and switches currency — all live-data subscriptions stay on, the app does the filtering (one country concept).
 
 ### Data model (all project-scoped DataStorage; `{schemaVersion, …}` envelopes)
 
 - **`profile`/`profile`** — `{country (ISO-2), currency (derived), lumpSum?, monthlyContribution?, riskAppetite, interests[], horizon='long'}`.
-- **`holding`/`<assetClass>:<symbol-or-slug>[:account]`** — multi-asset: `{assetClass (stock|etf|fund|bond|crypto|cash|other), name, symbol?, quantity?, amountInvested, currency, currentValueManual?, account?, purchaseDate?}`. One-shot migration (gated by `planner-meta/migrated-holdings-v1`) rewrites the old stock-only `holding` records, then deletes them.
-- **`opportunity`/`latest`** — kept as the record type (UI label "Proposals"); enriched items `{name, symbol?, assetClass?, whyItFits, whereAvailable?, expectedReturnPctRange?, currency?}`; the batch carries `country/currency/riskAppetite` so a country/risk change marks it stale (banner + re-run, never silent stale).
-- **`news`/`<holding key>`** — one record per held asset, overwritten daily: `{generatedAt, asset, items: {headline, summary, url, sentiment?, date}[], sources}`. Removing a holding deletes its news record.
+- **`holding`/`<assetClass>:<symbol-or-slug>[:account]`** — multi-asset: `{assetClass (stock|etf|fund|bond|crypto|cash|other), name, symbol?, quantity?, amountInvested, currency, currentValueManual?, account?, purchaseDate?}`. **v1 assumes all holdings are in the user's country currency** (single-currency); multi-currency/multi-country is v2. One-shot migration (gated by `planner-meta/migrated-holdings-v1`) rewrites the old stock-only `holding` records, then deletes them.
+- **`opportunity`/`latest`** — kept as the record type (UI label "Proposals"); enriched items `{name, symbol?, assetClass?, whyItFits, whereAvailable?, expectedReturnPctRange?}`; the batch carries `country/riskAppetite` so a country/risk change marks it stale (banner + re-run, never silent stale).
 - **Forecast** — _no record;_ computed on read from `holding` + `profile` via a pure `forecastUtils.ts` (the extracted `projectSeries`). Optional `forecast-assumptions`/`assumptions` overrides risk-derived defaults.
-- **`advice`/`latest`** (3.3) — `{generatedAt, country, currency, summary, actions[], newOpportunities: ProposalItem[]}` + a tiny `home-meta`/`seen` for the "what's new since last visit" diff.
+- **`advice`/`latest`** (Home) — `{generatedAt, country, summary, actions[], newOpportunities: ProposalItem[]}` + a tiny `home-meta`/`seen` for the "what's new since last visit" diff.
+- **`news`/`<holding key>`** — defined in **Stage 4** (the News phase): one record per held asset, refreshed daily.
 
-### Country model (decided)
+### Country model (decided — fixed US/UK/DE/PL, app-side filtering)
 
-- A canonical **`COUNTRY_CONFIG`** (ISO-2 → `{label, currency, stockRecordType?}`) as a pure util in thefactory-tools; `liveDataSeed.ts` builds its Stooq sources _from_ it (seed + registry can't drift); the template learns it via a bridge op (no hand-maintained mirror). Keep `country→currency` and `country→marketCode` distinct (`GB`↔`uk`).
-- A single host-side **`live-data.set-country`** bridge op owns the subscribe-swap (subscribe the new market _before_ unsubscribing others, so markets never blank) — policy in tested shared TS, not `app.js`.
-- **Currency: country decides, records confirm.** On toggle, set `activeCurrency = COUNTRY_CONFIG[c].currency` synchronously (no USD flash); the record currency is then a consistency check. Fix the hard-coded `$` input prefixes (a real non-US bug).
-- Countries with no seeded source stay fully usable (Profile/Proposals/News/Forecast/Calculator); the markets card shows "No live market seeded for {label} yet."
+- **Country lives on `profile.country`.** The app **filters client-side**: it reads its subscribed live records (`live-data.read`) and shows only the selected country's market (recordType `stock-quote-<cc>`), formatting money in that country's currency. **All subscriptions stay on** — no subscribe-swap, no new bridge op; the live-data layer just works and the app does the filtering.
+- A small **template-side `COUNTRY_CONFIG`** (`cc → {label, currency, marketSuffix}`) drives the toggle, the filter, and the currency. Fixed to the four seeded markets (US/UK/DE/PL); **adding/removing countries is not on the agenda**. _(If countries ever go dynamic: promote `COUNTRY_CONFIG` to a thefactory-tools util and have `liveDataSeed` derive its sources from it — a clean future refactor, not needed now.)_
+- **Currency follows the country**, set synchronously on toggle (no USD flash); the record currency is a consistency check. Fix the hard-coded `$` input prefixes (a real non-US bug).
+- For a country's live prices the project must be subscribed to that country's source (via the **Live Data** tab); unsubscribed → the markets card shows "No live market for {label} — subscribe in the Live Data tab."
 
 ### Analysis jobs (all reuse the generic `research()` primitive)
 
-| Job                | Where                            | Trigger                       | Record                 | Prompt module                |
-| ------------------ | -------------------------------- | ----------------------------- | ---------------------- | ---------------------------- |
-| Proposals          | backend `research()`             | on-demand (shipped)           | `opportunity`/`latest` | `opportunityAnalysis.ts`     |
-| News               | backend `research()`, per asset  | scheduled (daily) + on-demand | `news`/`<symbol>`      | new `newsAnalysis.ts`        |
-| Forecast           | client, pure math                | instant                       | none                   | `forecastUtils.ts`           |
-| Home/advisor (3.3) | backend `research()` + assembler | scheduled (daily) + on-demand | `advice`/`latest`      | new `homeAdvisorAnalysis.ts` |
+| Job          | Where                            | Trigger                            | Record                 | Prompt module                |
+| ------------ | -------------------------------- | ---------------------------------- | ---------------------- | ---------------------------- |
+| Proposals    | backend `research()`             | on-demand (shipped)                | `opportunity`/`latest` | `opportunityAnalysis.ts`     |
+| Forecast     | client, pure math                | instant                            | none                   | `forecastUtils.ts`           |
+| Home/advisor | backend `research()` + assembler | on **open if >24h stale** + manual | `advice`/`latest`      | new `homeAdvisorAnalysis.ts` |
+| News         | backend `research()`, per asset  | **Stage 4** (dedicated phase)      | `news`/`<symbol>`      | new `newsAnalysis.ts`        |
+
+**No backend cron in v1** — daily-fresh jobs run when the user **opens the relevant tab and the record is >24h old** (the daily-visit model) + a manual refresh. A server-side scheduler that pre-warms digests is a later phase.
 
 ### Buildable sub-stages
 
 3.1 ✅ web search · 3.2 ✅ opportunity search (→ Proposals + the `profile` record). Then, in order:
 
-- **3.4 — Multi-tab shell + country selector** _(foundation)._ Hash-routed tab shell (`<section>` per tab, a tab registry, shared ctx, progress stepper); move the existing calculator / profile form / top-picks into the Calculator / Profile / Proposals tabs verbatim. `COUNTRY_CONFIG` util + tests; `liveDataSeed` rebuilt to derive from it. `live-data.set-country` (+ subscribe/unsubscribe/list-sources) bridge ops in thefactory-ui (tested; all 3 clients inherit). Country toggle swaps market + currency correctly; no mixed-currency totals; `$`-prefix bug fixed.
-- **3.5 — Portfolio multi-asset.** Generalize `holding` content + key; one-shot migration; Portfolio tab (live-price match where a `stock-quote` exists, totals **grouped by currency**, add/edit form, "I bought this" deep-link from Proposals). Imported-later holdings (3rd-party) land here unchanged.
-- **3.6 — Forecast.** Extract `projectSeries` → pure `forecastUtils.ts` + `forecastConstants.ts` (per-risk default returns); Forecast tab (projection from portfolio value + monthly contribution + blended return; conservative/expected/optimistic; calculator-style fallback when empty). Same-currency-only (stated). Zero new backend.
-- **3.7 — Generalize the analysis route to a named-job registry** _(do before News)._ Backend `analysisJobs` registry `jobName → {buildRequest, toRecords→{type,key,content}}` + generic `POST /projects/:id/analysis/jobs/:jobName/run`; `opportunityAnalysis` becomes job `'opportunities'`; the specific route deleted (no shim). thefactory-ui: generic `analysis.run {jobName, params}` bridge op (replaces `analysis.run-opportunities`). Template: `bridge.runJob(jobName, params)`. Adding a job = one prompt module + one registry line.
-- **3.8 — News daily job** _(first consumer of 3.7)._ `newsAnalysis.ts` (per-asset `buildNewsRequest` + `toNewsItems`); a `newsTick` in `server.ts` (6h tick, 24h freshness gate, held-only, skip-not-error on no config/key, re-entrancy guard, abort-on-close); on-demand refresh via the generic job route. News tab grouped by asset.
-- **3.9 — Start onboarding** _(any time after 3.4)._ 3-question wizard (lump sum / monthly / risk + interests) → writes `profile` → runs Proposals → routes to Proposals mid-spinner; hides once matured. Extend `buildOpportunityRequest` to consume the new profile fields (drop the mirror fields in the same change).
-- **3.3 → 3.10 — Home digest + advisor** _(3.3 reframed)._ `homeAdvisorAnalysis.ts` (`buildAdvisorRequest(profile, holdings, latestOpportunity, newsDigest)`) registered as a job → `advice`/`latest`; a deterministic digest skeleton (portfolio delta, biggest mover, top news, forecast headline) + LLM only for new opportunities / strategy improvements (diffed against held + already-proposed); a `homeTick` (24h freshness; projects with a profile + ≥1 holding); Home tab + `home-meta`/`seen` diff; becomes the default landing once matured.
+- **3.4 — Multi-tab shell + country selector** _(foundation; template-only — no platform changes)._ Hash-routed tab shell (`<section>` per tab, a tab registry, shared ctx, progress stepper); move the existing calculator / profile form / top-picks into the Calculator / Profile / Proposals tabs verbatim. Country toggle writes `profile.country`; a template-side `COUNTRY_CONFIG` drives client-side filtering of the subscribed records + currency. `$`-prefix bug fixed. (Builds on the existing subscribe UI + `live-data.read`.)
+- **3.5 — Portfolio multi-asset** _(single-currency v1)._ Generalize `holding` content + key; one-shot migration; Portfolio tab (live-price match where a `stock-quote` exists, single-currency totals, add/edit form, "I bought this" deep-link from Proposals). Imported-later holdings (3rd-party) land here unchanged.
+- **3.6 — Forecast.** Extract `projectSeries` → pure `forecastUtils.ts` + `forecastConstants.ts` (per-risk default returns); Forecast tab (projection from portfolio value + monthly contribution + blended return; conservative/expected/optimistic; calculator-style fallback when empty). **Deterministic-only in v1** — an LLM assumption-sourcing/commentary layer is deferred (documented). Zero new backend.
+- **3.7 — Generalize the analysis route to a named-job registry.** Backend `analysisJobs` registry `jobName → {buildRequest, toRecords→{type,key,content}}` + generic `POST /projects/:id/analysis/jobs/:jobName/run`; `opportunityAnalysis` becomes job `'opportunities'`; the specific route deleted (no shim). thefactory-ui: generic `analysis.run {jobName, params}` bridge op (replaces `analysis.run-opportunities`). Template: `bridge.runJob(jobName, params)`. Adding a job = one prompt module + one registry line.
+- **3.8 — Start onboarding.** 3-question wizard (lump sum / monthly / risk + interests) → writes `profile` → runs Proposals → routes to Proposals mid-spinner; hides once matured. Extend `buildOpportunityRequest` to consume the new profile fields (drop the mirror fields in the same change).
+- **3.9 — Home digest + advisor** _(the reframed 3.3)._ `homeAdvisorAnalysis.ts` (`buildAdvisorRequest(profile, holdings, latestOpportunity)`) registered as a job → `advice`/`latest`; a deterministic digest skeleton (portfolio delta, biggest mover, forecast headline) + LLM only for new opportunities / strategy improvements (diffed against held + already-proposed). Runs **on open if the `advice` record is >24h stale** + a manual refresh (no cron); becomes the default landing once matured. `home-meta`/`seen` powers a "what's new since last visit" diff.
+
+### Stage 4 — News (a big dedicated phase, built last)
+
+Daily LLM-curated news on the user's held assets — a feature large enough to stand alone; built after everything else. The design is a **hybrid**:
+
+- **Discover-then-pull:** the first run has an agent find the best handful of outlets/sources for the user's assets + interests (stored as a `news-sources` record); subsequent refreshes only **pull the latest from those sources + run a small consolidation/digest pass** (cheap). Every few days a re-evaluation pass prunes/adds outlets.
+- **Search-each-time** is the simple fallback for assets with no curated source list yet.
+- **Social-media sweep** is desirable but **needs research** (build it ourselves vs. integrate a service) — out of scope until that research lands.
+
+This phase is where a real **per-project cost ceiling** and likely a **backend scheduler** (pre-warm overnight) land — deferred to here, not the earlier stages.
 
 ### Generic (platform) vs template (forkable)
 
-- **Generic, reused as-is:** DataStorage, LiveData sources/subscriptions, `AnalysisTools.research()`, the bridge transport + host-held credential. **New generic mechanisms:** the named-job analysis route/registry (3.7) and the `live-data.set-country`/subscribe/unsubscribe bridge ops (3.4) — tested in shared layers, free on all 3 clients.
-- **Template / finance domain:** all record _shapes_ + `type` strings; the finance prompt modules (`opportunityAnalysis`/`newsAnalysis`/`homeAdvisorAnalysis`, pure + tested); `COUNTRY_CONFIG` + currency/market maps; the tab registry + rendering; calculator + forecast math.
+- **Generic, reused as-is:** DataStorage, LiveData sources/subscriptions, `AnalysisTools.research()`, the bridge transport + host-held credential. **The one new generic mechanism is the named-job analysis route/registry (3.7)** — tested in shared layers, free on all 3 clients.
+- **Template / finance domain:** all record _shapes_ + `type` strings; the finance prompt modules (`opportunityAnalysis`/`homeAdvisorAnalysis`/`newsAnalysis`, pure + tested); the template-side `COUNTRY_CONFIG`; the tab registry + rendering; calculator + forecast math; the client-side country filtering.
 
-### Open questions (decide before the affected stage; leans noted)
+### Decided (v1 scope) & deferred
 
-1. **Country op shape (3.4).** `live-data.set-country` (single host op owns the subscribe-swap). Lean: the app writes `profile.country` and the op only reconciles subscriptions.
-2. **`opportunity` type kept (not renamed `proposal`).** Avoids migrating shipped user data; UI label is "Proposals" regardless. Confirm acceptable.
-3. **FX / multi-currency totals (3.5/3.6).** No FX feed is seeded. v1 **groups totals by currency** (no silent cross-currency sum); an FX feed is a future declarative DataSource. Confirm grouping-only for v1, or is FX in scope now?
-4. **News cadence + ceiling (3.8).** 6h tick / 24h freshness, held-only, low `searchLimit`. Add a hard per-project/day call ceiling? What's an acceptable spend per project/day?
-5. **Scheduled-job project filter (3.8/3.10).** Lean: any project with a `profile` + ≥1 `holding` (data-driven) vs a template-id metadata tag.
-6. **Home ordering (3.10).** Lean: Home reads whatever news exists (independent 24h freshness) vs chaining News→Home.
-7. **Forecast LLM layer (3.6).** Lean: v1 deterministic-only (per-risk defaults); LLM assumption-sourcing/commentary deferred.
-8. **`data.changed` push into the iframe.** Not in the bridge today; v1 uses 60s poll + refresh-on-show. A push is the clean follow-up for instant cross-tab freshness. Confirm acceptable for v1.
-9. **Countries without a seeded source (3.4).** Lean: registry currency + empty markets card (fully usable) vs hiding them from the toggle.
+**Decided:** country stored on the profile + app-side filtering (all subscriptions stay on); `opportunity` record type kept (label "Proposals"); **single-currency v1** (the user's country only); **no backend cron** — daily jobs refresh on-open-if-stale (24h) + manual; Home reads whatever proposals exist; Forecast deterministic-only; fixed 4 countries.
 
-**Dominant risk — cost.** Two daily ticks (News, Home) across all planner projects draw on the shared web-search key pool. Mitigation is structural: 24h per-record freshness (cost ∝ stale records, not tick rate), held-only News, low `searchLimit`, "return [] if nothing material," skip-not-error on missing config/key, optional per-project daily ceiling. News (`holdings × daily`) is the multiplier.
+**Deferred to later phases (v2+), each on existing rails:**
+
+- **Multi-currency / multi-country assets** + an FX feed (a declarative DataSource) — v2.
+- **Stage 4 — News** (hybrid outlet-curation + the social-media research) — the last big phase.
+- **`data.changed` push into the iframe** (instant cross-tab freshness; today: 60s poll + refresh-on-show) — a later stage.
+- **Backend scheduler** pre-warming digests + a per-project daily cost ceiling — with Stage 4.
+- **3rd-party integrations**, a **declarative-analysis-spec DSL**, **dynamic countries**, a **"browse another market" peek** — each triggered by a concrete need (see Non-goals).
 
 ---
 
