@@ -1,110 +1,147 @@
 # Implementation plan
 
-The first Overseer project template: a working investment-planning web app users fork into a new project and personalise via stories. The v1 vertical slice — template repo → backend catalog/transport → thefactory-ui surface → web + desktop + mobile clients — has **shipped and is verified on all three clients**. This doc is now the backlog of what's left plus a compact architecture reference; git history holds the build steps.
+The first Overseer project template: a working investment-planning app users fork into a new project and personalise via stories. Two layers are **shipped and verified on all three clients** — the template platform (catalog → app-view transport → `thefactory-ui` surface → bridge) and the **DataStorage + LiveData** foundation (project storage + live, currency-aware market data). The **active work** is the **analysis layer**, which both adds AI analysis jobs and reshapes the app from a single page into a **multi-tab daily companion** (the user visits each day and either has an action to take or learns something about their assets). This doc is a compact architecture reference + the active roadmap; git history holds the build steps and the why.
 
-Source for the broader template concept: [overseer-local/docs/expansion/05-example-projects.md](../../overseer-local/docs/expansion/05-example-projects.md).
-
----
-
-## What a template is
-
-An Overseer template is **a full upstream git repo that already runs**. "Create from template" forks the repo into a new project with a clean git history (the template is the very first commit) and registers it as a normal Overseer project. The user opens it, hits the **App** tab inside Overseer, and sees the project's UI rendered as a first-class surface of the host app. The repo ships a seeded `.factory/` so at least one story+feature sits in `pending`, sized to complete in seconds with a configured CLI/LLM. Subsequent stories sculpt the working app into the user's own product.
-
-The app surface is a streamed HTML/CSS/JS document — iframe on web + desktop (Electron renderer is Chromium), `<WebView>` on mobile. This pipe gives the same project the same look on every client and lets the project be extracted standalone (just open `index.html` over a local server). Runtime interaction between the embedded app and Overseer rides a **`postMessage` bridge** owned by the `ProjectAppView` wrapper (see [§ App↔Overseer bridge](#app-overseer-bridge) — being built now; it's also the transport [live-data-plan.md](./live-data-plan.md) Stage 1 uses for app data writes). The other integration seam — a declarative `.factory/template/manifest.json` for things Overseer renders natively — stays designed-not-built (see [Deferred integration seams](#deferred-integration-seams)).
+Broader template concept: [overseer-local/docs/expansion/05-example-projects.md](../../overseer-local/docs/expansion/05-example-projects.md).
 
 ---
 
-## Parity mandate (cross-repo)
+## Ground rules
 
-- **Web is the source of truth.** Desktop ([overseer-local](../../overseer-local)) and mobile ([thefactory-overseer-mobile](../../thefactory-overseer-mobile)) mirror it; matching features stay 1:1, only rendering differs.
-- **App-view transport is one HTTP route.** `GET /api/v1/projects/:id/view/*` serves files from the project checkout; all three clients point an iframe / WebView at the same URL.
-- **`ProjectAppView` + `TemplatePicker` shells live in [thefactory-ui](../../thefactory-ui)** (`src/web/` + `src/native/` peers, headless `useProjectAppView` + `TemplatesContext`). No client duplicates the chrome.
-- **Every new logical `*.ts` in thefactory-tools / thefactory-backend / thefactory-ui headless gets a co-located `*.test.ts`.** Frontend UI (`src/ui/`) parts stay untested.
+- **Web is the source of truth.** Desktop ([overseer-local](../../overseer-local)) + mobile ([thefactory-overseer-mobile](../../thefactory-overseer-mobile)) mirror it 1:1; only rendering differs. Parity isn't verified until run on a device. (The template iframe is identical across clients — only the host bridge ops need per-device verification.)
+- **Layering.** Core logic in [thefactory-tools](../../thefactory-tools); store schema in [thefactory-db](../../thefactory-db); the backend is a thin adapter; shared client logic lives in [thefactory-ui](../../thefactory-ui) headless, never duplicated per client. The app-view transport is one HTTP route — `GET /api/v1/projects/:id/view/*` — all three clients point an iframe / WebView at the same URL.
+- **Tests.** Every new logical `*.ts` (thefactory-db / -tools / -backend / -ui headless) gets a co-located `*.test.ts` (TDD). Frontend UI (`src/ui/`) and the template's `app.js` stay untested (verification is "open it in a browser").
+- **Purity.** `utils*.ts` is pure (zero node deps); `helpers*.ts` holds node-touching code (fs, db, network).
+- **No bespoke per-domain tables.** Everything is `DataStorage` over the `entities` table (or a file store). Live-data adapters are declarative config — no code-execution adapters. Analysis is backend code, not stories.
 
 ---
 
 ## Architecture (shipped) — reference
 
-How the pieces fit, for a new contributor. No rationale here; see git history / PRs for the why.
+### Template platform
 
-### Template repo layout
+- **A template is a full upstream git repo that already runs.** "Create from template" forks it (clean history, the template as the first commit) and registers a normal Overseer project with a seeded `.factory/`. The user opens the **App** tab and sees the project UI as a first-class host surface; subsequent stories sculpt it.
+- **App surface** = a streamed HTML/CSS/JS document — iframe on web + desktop, `<WebView>` on mobile — served by `GET /…/view/*` ([files.ts](../../thefactory-backend/src/routes/files.ts)) from the project checkout (`..`-traversal-guarded, `no-store`), authed by a short-lived project-scoped **view token** accepted from any of query param / session cookie / `Referer` (minted by bearer-only `POST /…/view/grant`). Utils: [viewToken](../../thefactory-backend/src/utils/viewToken.ts), [viewSessionCookie](../../thefactory-backend/src/utils/viewSessionCookie.ts), [viewRefererToken](../../thefactory-backend/src/utils/viewRefererToken.ts).
+- **Template repo layout** — static app at the root ([index.html](../index.html) / [style.css](../style.css) / [app.js](../app.js) / [data/](../data), vanilla JS + Chart.js via CDN, no build); seed at `.factory/template/` (`project.json`, `manifest.json`, `stories/`), deliberately off the `.factory/projects/<id>/` layout. The backend detects a template structurally (`.factory/template/project.json` exists).
+- **Backend** — hard-coded `TEMPLATES` catalog ([templates/](../../thefactory-backend/src/templates), `GET /templates`); `POST /projects/from-template` ([projects.ts](../../thefactory-backend/src/routes/projects.ts): clone → install `.factory/template/*` layout → single-commit reinit → `createProject({ metadata: { hasApp: true } })`). After backend route changes: `sync-schemas` + `generate-swagger`, then thefactory-ui `generate:backend`.
+- **thefactory-ui** — `TemplatesProvider` / `useTemplates` (catalog + `createFromTemplate`); `useProjectAppView` (grants the token, builds the absolute URL, auto-refreshes before expiry, remounts on debounced `files:changed`); `ProjectAppView` (web iframe + native `<WebView>` from the `thefactory-ui/native/ProjectAppView` subpath) + `TemplatePicker`. `'app'` is the first `SHELL_TAB_DEFS` entry, gated on `metadata.hasApp`.
+- **App↔Overseer bridge** — a `overseer:`-prefixed `postMessage` protocol owned by `ProjectAppView` (validates origin against the served URL, dispatches to a host `onBridgeMessage`, posts a response envelope); the sandboxed app never holds a credential. Shipped handlers: `ready`, `toast`, `data.*` (project storage), `live-data.read` (subscribed records), `analysis.run-opportunities` (run the analysis job, on the user's active agent LLM config).
 
-- Static app at the repo root: [index.html](../index.html), [style.css](../style.css), [app.js](../app.js), [data/*.json](../data) (vanilla JS + Chart.js via CDN, no build).
-- Seed at `.factory/template/` — deliberately **off** the canonical `.factory/projects/<id>/` layout so it can't be mistaken for a registered project, and so every template follows the same grep-able pattern. Contains `project.json` (canonical config), `manifest.json` (`{}` placeholder), and `stories/` (`order.json` + one file per story).
-- Detection by the backend is structural: "does `.factory/template/project.json` exist?".
+### DataStorage + LiveData foundation
 
-### Backend ([thefactory-backend](../../thefactory-backend))
-
-- **Catalog** — `Template` type + hard-coded `TEMPLATES` const in [src/templates/](../../thefactory-backend/src/templates), served by `GET /api/v1/templates` ([src/routes/templates.ts](../../thefactory-backend/src/routes/templates.ts)).
-- **From-template** — `POST /api/v1/projects/from-template` in [src/routes/projects.ts](../../thefactory-backend/src/routes/projects.ts). Order: clone → read `.factory/template/project.json` → `installTemplateProjectLayout` (move `.factory/template/*` → `.factory/projects/<id>/`) → `reinitWithSingleCommit` (wipe history, single "Initialize from … template" commit) → `createProject({ …, repo_url: '', dataLocation: 'inProject', metadata: { hasApp: true }, overrides: {} })`. Title/description/codeInfo/scopeGroupIds come from the template's canonical `project.json`; the wizard only supplies `id` + optional `mainGroupId`. Helpers + route have co-located tests.
-- **App-view transport** — `GET /api/v1/projects/:id/view/*` ([src/routes/files.ts](../../thefactory-backend/src/routes/files.ts)) streams checkout files with correct content-types, `Cache-Control: no-store`, and `..`-traversal protection. Auth accepts **any of three** signed-`viewToken` sources, checked in the `onRequest` hook in [src/server.ts](../../thefactory-backend/src/server.ts): query param, session cookie, or `Referer`. The cookie + Referer fallbacks exist because iframe/WebView **sub-resource** loads (CSS/JS/`fetch`) don't inherit the parent URL's query string, and cross-site cookies are blocked on dev HTTP. `POST /api/v1/projects/:id/view/grant` (bearer-only) mints the token (15-min TTL, project-scoped, read-only). Utils: [viewToken.ts](../../thefactory-backend/src/utils/viewToken.ts), [viewSessionCookie.ts](../../thefactory-backend/src/utils/viewSessionCookie.ts), [viewRefererToken.ts](../../thefactory-backend/src/utils/viewRefererToken.ts), each with co-located tests.
-- After backend route changes: `npm run sync-schemas` + `npm run generate-swagger`, then `npm run generate:backend` in thefactory-ui so the SDK + types regenerate.
-
-### thefactory-ui ([thefactory-ui](../../thefactory-ui))
-
-- **Headless** — `TemplatesProvider` / `useTemplates` ([src/headless/contexts/TemplatesContext.tsx](../../thefactory-ui/src/headless/contexts/TemplatesContext.tsx)) bundles the catalog read **and** the `createFromTemplate` mutation (matches the `LLMConfigsContext.createConfig` precedent — no standalone mutation hooks in this codebase). `useProjectAppView` ([src/headless/hooks/useProjectAppView.ts](../../thefactory-ui/src/headless/hooks/useProjectAppView.ts)) grants the token, builds the absolute URL, auto-refreshes before expiry (pure scheduling logic in [viewTokenSchedule.ts](../../thefactory-ui/src/headless/utils/viewTokenSchedule.ts), tested), and bumps a remount `key` on debounced `files:changed`. `ApiContextValue` now exposes `apiBaseUrl` for absolute-URL construction.
-- **Components** — `ProjectAppView` (web iframe `sandbox="allow-scripts allow-same-origin"`; native `<WebView>`) + `TemplatePicker`, each web + native peers. The native `ProjectAppView` is exported from the dedicated subpath `thefactory-ui/native/ProjectAppView` (default export), **not** the native barrel, because it hard-depends on the optional `react-native-webview` peer — a barrel export would force every native consumer to ship that native module.
-- **`hasApp` + nav** — `'app'` is the first entry in `SHELL_TAB_DEFS` ([src/headless/utils/shellNav.ts](../../thefactory-ui/src/headless/utils/shellNav.ts)). `ProjectEditorForm` carries a "Has App surface" toggle writing `metadata.hasApp`. Each client's sidebar/drawer filters the App tab to `metadata.hasApp === true`.
-
-### Clients
-
-- **Web** ([thefactory-overseer-web](../../thefactory-overseer-web)) — `TemplatesProvider` in the stack; App tab dispatch + `ProjectAppTab`; "Start from template" wizard mode in `ProjectManagerModal`; Sidebar `hasApp` filter.
-- **Desktop** ([overseer-local](../../overseer-local)) — same, reusing the web `ProjectAppView`. Renderer CSP in [src/renderer/index.html](../../overseer-local/src/renderer/index.html) includes `frame-src 'self' http: https:` so the iframe can frame the user-configured backend.
-- **Mobile** ([thefactory-overseer-mobile](../../thefactory-overseer-mobile)) — same, using the native `ProjectAppView` from the subpath. Requires the `react-native-webview` native dependency; a native binary rebuild (dev client / prebuild, not Expo Go) is needed whenever that dep changes.
+- **DataStorage** — a generic store of `DataRecord { scope, type, key, content, metadata?, createdAt, updatedAt }`, unique by `(scope, type, key)`. `scope` is a `projectId` (project-private) or `GENERAL_SCOPE = '__general__'` (shared). Two interchangeable backends: `DbDataStorage` (maps onto `entities` via an `external_key` unique index, `shouldEmbed: false`) and `FileDataStorage` (one JSON file per record). Backend CRUD at `…/projects/:id/data` + a `data:updated` WS event; the iframe app reads/writes via `overseer:data.*` (the host holds the write credential).
+- **LiveData** — declarative **DataSources** (general scope) fetch external JSON into DataStorage on a 60s scheduler tick (by `freshness`); **subscriptions** let projects share one dataset; `sample` records keep inline `history`. Adapter = `{ fetch, itemsPath, kind: sample|snapshot, map: { key, value?, time?, fields?, valueScale?, constFields? } }` — dotted paths, `$key` for object-keyed feeds, empty `itemsPath` = response root. The **Live Data tab** (all three clients) manages sources (create/edit/subscribe/refresh/records-peek); the app reads its subscribed records via `overseer:live-data.read`. **System providers** (`DataSource.system`) are platform-managed + delete-guarded (409 without `?force`).
+- **Already on these rails:** the planner persists holdings (project data) and shows live, currency-aware stock prices from Stooq country sources (US/UK/DE/PL); the platform's own **LLM price table** is a system DataSource whose refresh feeds `llmCostsTools.upsertPrices()`. The **analysis layer** (web search → LLM → `opportunity` records) is shipped through 3.2 and is the active roadmap below.
 
 ---
 
-## App↔Overseer bridge
+## Active roadmap — the analysis layer + multi-tab planner
 
-A `postMessage` protocol between the embedded app (iframe / WebView) and the `ProjectAppView` wrapper, so the running app can ask Overseer to do things it can't (and shouldn't) do itself. The wrapper holds the authed context; the sandboxed app never holds a credential. This is the transport [live-data-plan.md](./live-data-plan.md) Stage 1 extends with `data.*` for app storage writes.
+The analysis layer turns stored + live data into LLM-generated guidance and reshapes the planner into a multi-tab daily companion. 3.2's opportunity search **is** the Proposals tab, and its `profile` record **is** Profile/Start — so the original "3.3 advisor" is reframed as **Home** (the daily digest), with new sub-stages building the tabs + jobs between them.
 
-**Protocol.** `overseer:`-prefixed messages. App → Overseer: `ready` (handshake), `toast { message, variant? }`, and later `data.put|query|delete` (live-data Stage 1), `setTitle`, `navigate`, `openModal`. Overseer → App: response envelopes `{ id, ok, result?, error? }`, and later `theme`, `user`, `files:changed`.
+### The app shape (8 tabs)
 
-**Where it lives.**
-- **Transport in [thefactory-ui](../../thefactory-ui) `ProjectAppView`** (web `iframe` + native `<WebView>` peers): listen for messages, validate the source/origin against the served `url`, dispatch to a host-supplied `onBridgeMessage(req) => Promise<res|void>`, post the response back. The component stays pure transport; the host owns semantics. Headless carries the `BridgeRequest` / `BridgeResponse` types.
-- **Host handlers** wired per client at the App-tab mount (`ProjectAppTab`): `ready` → noop; `toast` → the client's toast surface; `data.*` → DataStorage (Stage 1 of the live-data plan).
-- **App side**: a tiny bridge client in the template's `app.js` that abstracts iframe (`window.parent.postMessage`) vs WebView (`window.ReactNativeWebView.postMessage`) and listens for responses. Fires `overseer:ready` on load.
+Left-to-right ≈ the new-user journey; **Home** is the daily landing once the user has a profile + holdings.
 
-**Status:** transport is **built + verified** on web / desktop / mobile (a temporary `ready` + `toast` round-trip confirmed both directions across all three, then removed). The `ProjectAppView` `onBridgeMessage` seam ships; the first real handlers (`data.*`) land with [live-data-plan.md](./live-data-plan.md) Stage 1. Apps that ignore the bridge stay plain iframes.
+| Tab            | Reads / writes                       | Analysis behind it                                    |
+| -------------- | ------------------------------------ | ----------------------------------------------------- |
+| **Start**      | writes `profile`; triggers Proposals | none (onboarding wizard)                              |
+| **Profile**    | `profile` (edit)                     | none                                                  |
+| **Proposals**  | `opportunity`/`latest` (read)        | on-demand `research()` (shipped; evolved prompt)      |
+| **Portfolio**  | `holding` CRUD + `live-data.read`    | none                                                  |
+| **Forecast**   | reads `holding` + `profile`          | none — pure client math                               |
+| **News**       | `news`/`<asset>` (read)              | scheduled (daily) + on-demand `research()`, per asset |
+| **Calculator** | none                                 | none (the existing calculator, moved here)            |
+| **Home** (3.3) | reads all + `advice`/`latest`        | scheduled (daily) + on-demand advisor `research()`    |
+
+**Default tab is derived from records** (never a stored onboarding flag): no profile + no holdings → **Start**; matured (profile + ≥1 holding) + Home enabled → **Home**; profile but no holdings → **Proposals**; else **Portfolio**. Start hides itself once matured (re-openable from Profile). Per-tab "done" is derived from record existence (drives a progress stepper). A **country toggle** at the top (= `profile.country`) swaps the live market the project is subscribed to + the app's currency (one country concept — the "company-stocks dropdown" is the same toggle re-subscribing).
+
+### Data model (all project-scoped DataStorage; `{schemaVersion, …}` envelopes)
+
+- **`profile`/`profile`** — `{country (ISO-2), currency (derived), lumpSum?, monthlyContribution?, riskAppetite, interests[], horizon='long'}`.
+- **`holding`/`<assetClass>:<symbol-or-slug>[:account]`** — multi-asset: `{assetClass (stock|etf|fund|bond|crypto|cash|other), name, symbol?, quantity?, amountInvested, currency, currentValueManual?, account?, purchaseDate?}`. One-shot migration (gated by `planner-meta/migrated-holdings-v1`) rewrites the old stock-only `holding` records, then deletes them.
+- **`opportunity`/`latest`** — kept as the record type (UI label "Proposals"); enriched items `{name, symbol?, assetClass?, whyItFits, whereAvailable?, expectedReturnPctRange?, currency?}`; the batch carries `country/currency/riskAppetite` so a country/risk change marks it stale (banner + re-run, never silent stale).
+- **`news`/`<holding key>`** — one record per held asset, overwritten daily: `{generatedAt, asset, items: {headline, summary, url, sentiment?, date}[], sources}`. Removing a holding deletes its news record.
+- **Forecast** — _no record;_ computed on read from `holding` + `profile` via a pure `forecastUtils.ts` (the extracted `projectSeries`). Optional `forecast-assumptions`/`assumptions` overrides risk-derived defaults.
+- **`advice`/`latest`** (3.3) — `{generatedAt, country, currency, summary, actions[], newOpportunities: ProposalItem[]}` + a tiny `home-meta`/`seen` for the "what's new since last visit" diff.
+
+### Country model (decided)
+
+- A canonical **`COUNTRY_CONFIG`** (ISO-2 → `{label, currency, stockRecordType?}`) as a pure util in thefactory-tools; `liveDataSeed.ts` builds its Stooq sources _from_ it (seed + registry can't drift); the template learns it via a bridge op (no hand-maintained mirror). Keep `country→currency` and `country→marketCode` distinct (`GB`↔`uk`).
+- A single host-side **`live-data.set-country`** bridge op owns the subscribe-swap (subscribe the new market _before_ unsubscribing others, so markets never blank) — policy in tested shared TS, not `app.js`.
+- **Currency: country decides, records confirm.** On toggle, set `activeCurrency = COUNTRY_CONFIG[c].currency` synchronously (no USD flash); the record currency is then a consistency check. Fix the hard-coded `$` input prefixes (a real non-US bug).
+- Countries with no seeded source stay fully usable (Profile/Proposals/News/Forecast/Calculator); the markets card shows "No live market seeded for {label} yet."
+
+### Analysis jobs (all reuse the generic `research()` primitive)
+
+| Job                | Where                            | Trigger                       | Record                 | Prompt module                |
+| ------------------ | -------------------------------- | ----------------------------- | ---------------------- | ---------------------------- |
+| Proposals          | backend `research()`             | on-demand (shipped)           | `opportunity`/`latest` | `opportunityAnalysis.ts`     |
+| News               | backend `research()`, per asset  | scheduled (daily) + on-demand | `news`/`<symbol>`      | new `newsAnalysis.ts`        |
+| Forecast           | client, pure math                | instant                       | none                   | `forecastUtils.ts`           |
+| Home/advisor (3.3) | backend `research()` + assembler | scheduled (daily) + on-demand | `advice`/`latest`      | new `homeAdvisorAnalysis.ts` |
+
+### Buildable sub-stages
+
+3.1 ✅ web search · 3.2 ✅ opportunity search (→ Proposals + the `profile` record). Then, in order:
+
+- **3.4 — Multi-tab shell + country selector** _(foundation)._ Hash-routed tab shell (`<section>` per tab, a tab registry, shared ctx, progress stepper); move the existing calculator / profile form / top-picks into the Calculator / Profile / Proposals tabs verbatim. `COUNTRY_CONFIG` util + tests; `liveDataSeed` rebuilt to derive from it. `live-data.set-country` (+ subscribe/unsubscribe/list-sources) bridge ops in thefactory-ui (tested; all 3 clients inherit). Country toggle swaps market + currency correctly; no mixed-currency totals; `$`-prefix bug fixed.
+- **3.5 — Portfolio multi-asset.** Generalize `holding` content + key; one-shot migration; Portfolio tab (live-price match where a `stock-quote` exists, totals **grouped by currency**, add/edit form, "I bought this" deep-link from Proposals). Imported-later holdings (3rd-party) land here unchanged.
+- **3.6 — Forecast.** Extract `projectSeries` → pure `forecastUtils.ts` + `forecastConstants.ts` (per-risk default returns); Forecast tab (projection from portfolio value + monthly contribution + blended return; conservative/expected/optimistic; calculator-style fallback when empty). Same-currency-only (stated). Zero new backend.
+- **3.7 — Generalize the analysis route to a named-job registry** _(do before News)._ Backend `analysisJobs` registry `jobName → {buildRequest, toRecords→{type,key,content}}` + generic `POST /projects/:id/analysis/jobs/:jobName/run`; `opportunityAnalysis` becomes job `'opportunities'`; the specific route deleted (no shim). thefactory-ui: generic `analysis.run {jobName, params}` bridge op (replaces `analysis.run-opportunities`). Template: `bridge.runJob(jobName, params)`. Adding a job = one prompt module + one registry line.
+- **3.8 — News daily job** _(first consumer of 3.7)._ `newsAnalysis.ts` (per-asset `buildNewsRequest` + `toNewsItems`); a `newsTick` in `server.ts` (6h tick, 24h freshness gate, held-only, skip-not-error on no config/key, re-entrancy guard, abort-on-close); on-demand refresh via the generic job route. News tab grouped by asset.
+- **3.9 — Start onboarding** _(any time after 3.4)._ 3-question wizard (lump sum / monthly / risk + interests) → writes `profile` → runs Proposals → routes to Proposals mid-spinner; hides once matured. Extend `buildOpportunityRequest` to consume the new profile fields (drop the mirror fields in the same change).
+- **3.3 → 3.10 — Home digest + advisor** _(3.3 reframed)._ `homeAdvisorAnalysis.ts` (`buildAdvisorRequest(profile, holdings, latestOpportunity, newsDigest)`) registered as a job → `advice`/`latest`; a deterministic digest skeleton (portfolio delta, biggest mover, top news, forecast headline) + LLM only for new opportunities / strategy improvements (diffed against held + already-proposed); a `homeTick` (24h freshness; projects with a profile + ≥1 holding); Home tab + `home-meta`/`seen` diff; becomes the default landing once matured.
+
+### Generic (platform) vs template (forkable)
+
+- **Generic, reused as-is:** DataStorage, LiveData sources/subscriptions, `AnalysisTools.research()`, the bridge transport + host-held credential. **New generic mechanisms:** the named-job analysis route/registry (3.7) and the `live-data.set-country`/subscribe/unsubscribe bridge ops (3.4) — tested in shared layers, free on all 3 clients.
+- **Template / finance domain:** all record _shapes_ + `type` strings; the finance prompt modules (`opportunityAnalysis`/`newsAnalysis`/`homeAdvisorAnalysis`, pure + tested); `COUNTRY_CONFIG` + currency/market maps; the tab registry + rendering; calculator + forecast math.
+
+### Open questions (decide before the affected stage; leans noted)
+
+1. **Country op shape (3.4).** `live-data.set-country` (single host op owns the subscribe-swap). Lean: the app writes `profile.country` and the op only reconciles subscriptions.
+2. **`opportunity` type kept (not renamed `proposal`).** Avoids migrating shipped user data; UI label is "Proposals" regardless. Confirm acceptable.
+3. **FX / multi-currency totals (3.5/3.6).** No FX feed is seeded. v1 **groups totals by currency** (no silent cross-currency sum); an FX feed is a future declarative DataSource. Confirm grouping-only for v1, or is FX in scope now?
+4. **News cadence + ceiling (3.8).** 6h tick / 24h freshness, held-only, low `searchLimit`. Add a hard per-project/day call ceiling? What's an acceptable spend per project/day?
+5. **Scheduled-job project filter (3.8/3.10).** Lean: any project with a `profile` + ≥1 `holding` (data-driven) vs a template-id metadata tag.
+6. **Home ordering (3.10).** Lean: Home reads whatever news exists (independent 24h freshness) vs chaining News→Home.
+7. **Forecast LLM layer (3.6).** Lean: v1 deterministic-only (per-risk defaults); LLM assumption-sourcing/commentary deferred.
+8. **`data.changed` push into the iframe.** Not in the bridge today; v1 uses 60s poll + refresh-on-show. A push is the clean follow-up for instant cross-tab freshness. Confirm acceptable for v1.
+9. **Countries without a seeded source (3.4).** Lean: registry currency + empty markets card (fully usable) vs hiding them from the toggle.
+
+**Dominant risk — cost.** Two daily ticks (News, Home) across all planner projects draw on the shared web-search key pool. Mitigation is structural: 24h per-record freshness (cost ∝ stale records, not tick rate), held-only News, low `searchLimit`, "return [] if nothing material," skip-not-error on missing config/key, optional per-project daily ceiling. News (`holdings × daily`) is the multiplier.
 
 ---
 
-## Backlog
+## Backlog (template platform)
 
-### Deferred integration seams
+### Deferred integration seams (each names its build trigger)
 
-Designed so the v1 shapes don't paint us into a corner; none built. Each names its build trigger.
-
-- **`manifest.json` native rendering.** Overseer reads `.factory/template/manifest.json` (currently `{}`) at load time and renders declared `{ menuEntries?, theme?, defaultChats? }` *natively*. **Trigger:** a template declares any of these and a contributor adds the host-side renderer.
-- **App writes to repo source files (`overseer:writeFile`).** Distinct from app *data* (which goes through DataStorage — see [live-data-plan.md](./live-data-plan.md)). This is the app editing its own version-controlled source via the bearer-protected file routes. **Trigger:** an app surface needs to mutate repo files at runtime (rare; most runtime state is DataStorage).
-- **"Native app template" kind.** A template that ships a React tree using thefactory-ui's `web/`+`native/` peers, imported by the host directly (no iframe). Tighter integration vs. tech-stack lock-in + host-runtime security. **Trigger:** product decision to offer a second template kind.
-- **Per-project dev server (framework templates).** When a template ships a `package.json` with a `dev` script, the backend spawns it lazily on first App-tab open, reverse-proxies `/view/*` to it, idle-shuts-down, and HMR rides the dev server's own ws. **Trigger:** the first template that needs a build pipeline.
-- **Hosted-repo conversion.** Project-settings affordance wrapping the existing `POST /api/v1/projects/github/create-repo` + git remote/push steps, converting a local-only project to GitHub-backed. **Trigger:** a user wants their project pushed from inside Overseer.
-
-### Template content polish (this repo)
-
-The tooling is done; the investment-planner content can grow. Open, low-priority:
-
-- Tighten the calculator + holdings copy and visual design.
-- Flesh out Story 1's feature prompt as real usage surfaces rough edges.
-
-### Future template stories (ship as `?` in `.factory/template/stories/`)
-
-The roadmap the user sees in the stories list.
-
-- **Live prices, opportunity search, periodic scouring** — no longer blocked-on-a-trigger; **re-architected into the DataStorage + LiveData platform plan** ([live-data-plan.md](./live-data-plan.md)). They become real features (Stages 1–3 there), not agent-in-story hacks. The `.factory` stories stay as the user-facing roadmap entries.
-- **Broker / brokerage-API connections.** Still a genuine future story. Trigger: an OAuth credential type for brokerage APIs in [thefactory-tools/src/credentials/credentialTypes.ts](../../thefactory-tools/src/credentials/credentialTypes.ts).
+- **`manifest.json` native rendering** — Overseer reads `.factory/template/manifest.json` and renders declared `{ menuEntries?, theme?, defaultChats? }` natively. Trigger: a template declares any of these and a contributor adds the host renderer.
+- **App writes to repo source files (`overseer:writeFile`)** — the app editing its own version-controlled source via the bearer file routes (distinct from app _data_, which is DataStorage). Trigger: an app surface needs to mutate repo files at runtime.
+- **"Native app template" kind** — a template shipping a React tree using thefactory-ui's web+native peers, imported by the host directly (no iframe). Trigger: a product decision to offer a second template kind.
+- **Per-project dev server (framework templates)** — when a template ships a `dev` script, the backend spawns it lazily on first App-tab open and reverse-proxies `/view/*` to it. Trigger: the first template that needs a build pipeline.
+- **Hosted-repo conversion** — a project-settings affordance converting a local-only project to GitHub-backed (wraps `POST /projects/github/create-repo` + remote/push). Trigger: a user wants their project pushed from inside Overseer.
 
 ### Subsequent templates
 
-Board game, book writing, car buyer helper, interior planner (per [the expansion doc](../../overseer-local/docs/expansion/05-example-projects.md)). The plumbing is proven with one; add the next when prioritised.
+Board game, book writing, car-buyer helper, interior planner (per [the expansion doc](../../overseer-local/docs/expansion/05-example-projects.md)). The plumbing is proven with one; add the next when prioritised.
 
 ---
 
-## Non-goals
+## Non-goals (name the trigger to revisit)
 
-- A `template.json` / `scaffold/` machinery in thefactory-tools. Templates are full repos; no template loader.
-- A dynamic catalog endpoint fetching from a remote registry. Hard-coded const only.
-- Tests for the template's `app.js` / Chart.js wiring. Templates are demonstrations; verification is "open it in a browser".
-- Post-clone tweaks beyond install-layout + `git init` + single commit.
-- Auth-bypass on `/view/*`. The signed-token paths (query / cookie / Referer) are the only non-bearer entry; the token is project-scoped, read-only, short-lived.
+**Template platform:**
+
+- No `template.json` / `scaffold/` machinery in thefactory-tools — templates are full repos, no loader.
+- No dynamic catalog endpoint fetching a remote registry — hard-coded const only.
+- No post-clone tweaks beyond install-layout + `git init` + single commit.
+- No auth-bypass on `/view/*` — the signed-token paths (query / cookie / Referer) are the only non-bearer entry; the token is project-scoped, read-only, short-lived.
+
+**Data / analysis:**
+
+- No bespoke per-domain tables; no code-execution live-data adapters; no non-DB analysis (feeds, sharing, and analysis need the DB).
+- **No 3rd-party integrations yet** (bank / brokerage import). Designed on existing rails: credential type → OAuth flow → backend importer writing `holding` records → `integration.connect`/`import` bridge ops. **Trigger:** the first brokerage/aggregator OAuth credential type in [credentialTypes.ts](../../thefactory-tools/src/credentials/credentialTypes.ts). Standing obligation: keep `holding` the single portfolio source of truth + the connect affordance hidden when standalone.
+- **No declarative-analysis-spec DSL yet** — the named-job registry (3.7) is enough. **Trigger:** a _second_ domain needs analysis jobs.
+- **No FX engine, "browse another market" peek, or authed/paginated live-data adapters yet** — each on existing rails when a concrete need triggers it.

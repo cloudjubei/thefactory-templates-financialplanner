@@ -114,6 +114,33 @@
           <h2 id="picks-h">Top picks</h2>
           <p class="card-sub">Ideas tailored to your investment focus.</p>
         </div>
+        <form id="profile-form" class="profile-form" hidden autocomplete="off">
+          <input
+            name="country"
+            placeholder="Country (e.g. PL)"
+            aria-label="Country"
+            maxlength="32"
+          />
+          <select name="risk" aria-label="Risk appetite">
+            <option value="cautious">Cautious</option>
+            <option value="balanced">Balanced</option>
+            <option value="adventurous">Adventurous</option>
+          </select>
+          <input
+            name="preferences"
+            placeholder="Interests (e.g. clean energy)"
+            aria-label="Interests"
+            maxlength="80"
+          />
+          <button type="button" id="find-opportunities">
+            Find opportunities
+          </button>
+        </form>
+        <p
+          id="opportunities-status"
+          class="opportunities-status"
+          role="status"
+        ></p>
         <div id="top-picks-body" class="top-picks-empty">
           <p class="empty-emoji" aria-hidden="true">✨</p>
           <p>
@@ -121,6 +148,21 @@
             investment focus.
           </p>
         </div>
+      </section>
+
+      <section
+        class="card markets"
+        id="markets"
+        hidden
+        aria-labelledby="markets-h"
+      >
+        <div class="card-head">
+          <h2 id="markets-h">Live markets</h2>
+          <p class="card-sub">
+            Shared data your project subscribes to, refreshed automatically.
+          </p>
+        </div>
+        <div id="markets-body" class="markets-empty"></div>
       </section>
 
       <section class="card holdings" aria-labelledby="holdings-h">

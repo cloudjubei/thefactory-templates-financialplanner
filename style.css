@@ -439,3 +439,83 @@ td.row-actions {
   color: var(--negative);
   border-color: var(--negative);
 }
+
+/* ---- Live markets + live-price indicators -------------------------------- */
+.markets-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.markets-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.markets-list li:last-child {
+  border-bottom: 0;
+}
+.market-symbol {
+  font-weight: 600;
+}
+.market-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--growth);
+  font-weight: 600;
+}
+.markets-empty {
+  color: var(--muted);
+  font-size: 14px;
+}
+.live-dot {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--growth);
+  white-space: nowrap;
+}
+td.num.is-live {
+  color: var(--growth);
+}
+
+/* ---- Opportunity profile form -------------------------------------------- */
+.profile-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.profile-form input,
+.profile-form select {
+  flex: 1 1 120px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+.profile-form button {
+  flex: 0 0 auto;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent, #2563eb);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+.profile-form button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.opportunities-status {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--muted);
+  min-height: 1em;
+}

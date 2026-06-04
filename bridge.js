@@ -39,5 +39,10 @@
     queryData: (payload) => call("data.query", payload),
     putData: (payload) => call("data.put", payload),
     deleteData: (payload) => call("data.delete", payload),
+    // The records of every live-data source this project is subscribed to.
+    readLiveData: () => call("live-data.read", undefined),
+    // Run the opportunity-analysis job (web search + LLM). Slow, so allow 90s.
+    runOpportunities: () =>
+      call("analysis.run-opportunities", undefined, 90000),
   };
 })();
