@@ -233,6 +233,24 @@ body {
   font-size: 14px;
 }
 
+.pick-actions {
+  margin-top: 6px;
+}
+.pick-buy {
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.pick-buy:hover {
+  border-color: var(--accent);
+}
+
 /* ---- Holdings ------------------------------------------------------------ */
 
 .table-wrap {
@@ -270,8 +288,42 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.holdings .sym {
+.asset-cell {
+  min-width: 0;
+}
+.asset-name {
+  display: block;
   font-weight: 650;
+}
+.asset-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+}
+.asset-badge {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+.asset-symbol {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.asset-account {
+  font-size: 12px;
+  color: var(--muted);
+}
+.asset-account::before {
+  content: "· ";
 }
 
 .holdings-totals {
@@ -338,15 +390,43 @@ body {
   }
 }
 
-/* ---- Add / remove holdings ---------------------------------------------- */
+/* ---- Add / edit holdings ------------------------------------------------ */
 .add-holding {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 14px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
 }
-.add-holding input {
-  flex: 1 1 120px;
+.add-holding-title {
+  margin: 0 0 12px;
+  font-weight: 650;
+}
+.add-holding-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+@media (min-width: 640px) {
+  .add-holding-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+.add-holding .field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.add-holding .field > span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.add-holding .field em {
+  font-style: normal;
+  opacity: 0.7;
+}
+.add-holding input,
+.add-holding select {
+  width: 100%;
   min-width: 0;
   padding: 8px 10px;
   font: inherit;
@@ -355,14 +435,30 @@ body {
   border: 1px solid var(--border);
   border-radius: 9px;
 }
-.add-holding input:focus {
+.add-holding input:focus,
+.add-holding select:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
-.add-holding button {
-  flex: 0 0 auto;
-  padding: 8px 16px;
+.add-holding .input-wrap {
+  display: flex;
+  width: 100%;
+  padding: 0 10px;
+}
+.add-holding .input-wrap input {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 8px 2px;
+}
+.add-holding-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.add-holding-actions button[type="submit"] {
+  padding: 9px 18px;
   font: inherit;
   font-weight: 600;
   color: #fff;
@@ -371,11 +467,43 @@ body {
   border-radius: 9px;
   cursor: pointer;
 }
-.add-holding button:hover {
+.add-holding-actions button[type="submit"]:hover {
   background: var(--accent-strong);
+}
+.ghost-btn {
+  padding: 9px 16px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  cursor: pointer;
+}
+.ghost-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
 }
 td.row-actions {
   text-align: right;
+  white-space: nowrap;
+}
+.row-actions button {
+  font: inherit;
+  cursor: pointer;
+}
+.edit-holding {
+  padding: 4px 10px;
+  font-size: 13px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  margin-right: 4px;
+}
+.edit-holding:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 .remove-holding {
   width: 24px;
@@ -386,7 +514,6 @@ td.row-actions {
   background: transparent;
   border: 1px solid var(--border);
   border-radius: 7px;
-  cursor: pointer;
 }
 .remove-holding:hover {
   color: var(--negative);

@@ -99,6 +99,87 @@ async function saveProfile(patch) {
 const HOLDING_TYPE = "holding";
 const SEED_KEY = "planner.holdings.v1";
 
+// Multi-asset support. `stock`/`etf` can be matched to a live `stock-quote`
+// source; everything else is valued from a manual figure (or amount invested).
+const ASSET_CLASSES = [
+  { value: "stock", label: "Stock" },
+  { value: "etf", label: "ETF" },
+  { value: "fund", label: "Fund" },
+  { value: "bond", label: "Bond" },
+  { value: "crypto", label: "Crypto" },
+  { value: "cash", label: "Cash" },
+  { value: "other", label: "Other" },
+];
+const ASSET_CLASS_LABEL = new Map(ASSET_CLASSES.map((a) => [a.value, a.label]));
+const MARKET_ASSET_CLASSES = new Set(["stock", "etf"]);
+
+function slugify(text) {
+  const s = String(text || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+  return s || "item";
+}
+
+// `<assetClass>:<symbol-or-slug>[:account]` — stable identity for a holding.
+function holdingKey(h) {
+  const ident = h.symbol ? normalizeSymbol(h.symbol) : slugify(h.name);
+  const parts = [h.assetClass || "other", ident];
+  if (h.account) parts.push(slugify(h.account));
+  return parts.join(":");
+}
+
+// One-shot rewrite of a pre-3.5 stock-only record into the multi-asset shape.
+function migrateOldHolding(old) {
+  return {
+    assetClass: "stock",
+    name: old.name || old.symbol || "",
+    symbol: old.symbol ? normalizeSymbol(old.symbol) : undefined,
+    quantity: Number(old.quantity) || undefined,
+    amountInvested: Number(old.costBasis) || 0,
+    currency: activeCurrency,
+    currentValueManual:
+      old.currentValue !== undefined
+        ? Number(old.currentValue) || 0
+        : undefined,
+  };
+}
+
+function isOldHolding(h) {
+  return (
+    h &&
+    h.assetClass === undefined &&
+    (h.costBasis !== undefined || h.currentValue !== undefined)
+  );
+}
+
+// Two holdings share a key when they are the same instrument in the same
+// account, so combining them is non-destructive: positions aggregate, amounts
+// sum. Identity fields (assetClass/symbol/account/name) come from `base`.
+function mergeHoldings(base, add) {
+  const sum = (a, b) => (Number(a) || 0) + (Number(b) || 0);
+  const merged = {
+    ...base,
+    amountInvested: sum(base.amountInvested, add.amountInvested),
+  };
+  if (base.quantity !== undefined || add.quantity !== undefined) {
+    merged.quantity = sum(base.quantity, add.quantity);
+  }
+  if (
+    base.currentValueManual !== undefined ||
+    add.currentValueManual !== undefined
+  ) {
+    merged.currentValueManual = sum(
+      base.currentValueManual,
+      add.currentValueManual,
+    );
+  }
+  if (!merged.purchaseDate && add.purchaseDate)
+    merged.purchaseDate = add.purchaseDate;
+  return merged;
+}
+
 function createHoldingsStore() {
   const bridge = window.OverseerBridge;
   if (bridge && bridge.embedded) {
@@ -108,9 +189,8 @@ function createHoldingsStore() {
         return records.map((r) => r.content);
       },
       put: (h) =>
-        bridge.putData({ type: HOLDING_TYPE, key: h.symbol, content: h }),
-      remove: (symbol) =>
-        bridge.deleteData({ type: HOLDING_TYPE, key: symbol }),
+        bridge.putData({ type: HOLDING_TYPE, key: holdingKey(h), content: h }),
+      remove: (key) => bridge.deleteData({ type: HOLDING_TYPE, key }),
       async isSeeded() {
         const marker = await bridge.queryData({
           type: "planner-meta",
@@ -139,10 +219,11 @@ function createHoldingsStore() {
       return read();
     },
     async put(h) {
-      write([...read().filter((x) => x.symbol !== h.symbol), h]);
+      const key = holdingKey(h);
+      write([...read().filter((x) => holdingKey(x) !== key), h]);
     },
-    async remove(symbol) {
-      write(read().filter((x) => x.symbol !== symbol));
+    async remove(key) {
+      write(read().filter((x) => holdingKey(x) !== key));
     },
     async isSeeded() {
       return localStorage.getItem(SEED_KEY) !== null;
@@ -160,6 +241,62 @@ async function ensureSeeded() {
   const defaults = await loadJson("./data/sample-holdings.json");
   for (const h of defaults) await holdingsStore.put(h);
   await holdingsStore.markSeeded();
+}
+
+// Rewrite any pre-3.5 stock-only `holding` records into the multi-asset shape.
+// Embedded: gated by a `planner-meta/migrated-holdings-v1` marker (re-keys the
+// record + deletes the old key). Standalone: rewrites the localStorage array.
+async function migrateHoldings() {
+  const bridge = window.OverseerBridge;
+  if (bridge && bridge.embedded) {
+    const marker = await bridge.queryData({
+      type: "planner-meta",
+      key: "migrated-holdings-v1",
+    });
+    if (marker.length > 0) return;
+    const records = await bridge.queryData({ type: HOLDING_TYPE });
+    // Collect migrated records by their new key first, merging any that collide,
+    // so two old records (e.g. AAPL + AAPL.US) aggregate rather than overwrite.
+    const writes = new Map();
+    const oldKeys = [];
+    for (const rec of records) {
+      if (!isOldHolding(rec.content)) continue;
+      const next = migrateOldHolding(rec.content);
+      const newKey = holdingKey(next);
+      const prior = writes.get(newKey);
+      writes.set(newKey, prior ? mergeHoldings(prior, next) : next);
+      if (rec.key !== newKey) oldKeys.push(rec.key);
+    }
+    for (const [key, content] of writes) {
+      await bridge.putData({ type: HOLDING_TYPE, key, content });
+    }
+    for (const key of oldKeys) {
+      if (!writes.has(key))
+        await bridge.deleteData({ type: HOLDING_TYPE, key });
+    }
+    await bridge.putData({
+      type: "planner-meta",
+      key: "migrated-holdings-v1",
+      content: { migrated: true },
+    });
+    return;
+  }
+  let arr;
+  try {
+    arr = JSON.parse(localStorage.getItem(SEED_KEY));
+  } catch {
+    return;
+  }
+  if (!Array.isArray(arr) || !arr.some(isOldHolding)) return;
+  // Rebuild through a key-map so migrated duplicates collapse into one holding.
+  const byKey = new Map();
+  for (const h of arr) {
+    const next = isOldHolding(h) ? migrateOldHolding(h) : h;
+    const key = holdingKey(next);
+    const prior = byKey.get(key);
+    byKey.set(key, prior ? mergeHoldings(prior, next) : next);
+  }
+  localStorage.setItem(SEED_KEY, JSON.stringify([...byKey.values()]));
 }
 
 async function refreshHoldings() {
@@ -261,72 +398,205 @@ async function refreshLive() {
   if (recalcCalculator) recalcCalculator();
 }
 
+// The holdings currently rendered, by key — lets row actions (edit/remove)
+// resolve the full record without re-querying the store.
+let holdingsByKey = new Map();
+
+// A holding's current value: live (price × qty) for market assets with a quote,
+// else the manual figure, else fall back to the amount invested (flat).
+function holdingCurrentValue(h) {
+  if (MARKET_ASSET_CLASSES.has(h.assetClass) && h.symbol) {
+    const live = livePrices.get(normalizeSymbol(h.symbol));
+    // A non-positive quote means "no useful price", not "worth nothing" — fall
+    // through to the manual / invested figure rather than zeroing the holding.
+    if (live && live.v > 0 && Number(h.quantity)) {
+      return { value: Number(h.quantity) * live.v, live };
+    }
+  }
+  if (h.currentValueManual !== undefined && h.currentValueManual !== null) {
+    return { value: Number(h.currentValueManual) || 0, live: null };
+  }
+  return { value: Number(h.amountInvested) || 0, live: null };
+}
+
 function renderHoldings(holdings) {
   const tbody = document.getElementById("holdings-body");
   tbody.innerHTML = "";
-  let cost = 0;
+  holdingsByKey = new Map();
+  let invested = 0;
   let current = 0;
   for (const h of holdings) {
-    const live = livePrices.get(normalizeSymbol(h.symbol));
-    const rowCost = Number(h.costBasis) || 0;
-    const rowCurrent = live
-      ? (Number(h.quantity) || 0) * live.v
-      : Number(h.currentValue) || 0;
-    const rowPnl = rowCurrent - rowCost;
-    cost += rowCost;
+    const key = holdingKey(h);
+    holdingsByKey.set(key, h);
+    const rowInvested = Number(h.amountInvested) || 0;
+    const { value: rowCurrent, live } = holdingCurrentValue(h);
+    const rowPnl = rowCurrent - rowInvested;
+    invested += rowInvested;
     current += rowCurrent;
-    const liveTag = live
-      ? ` <span class="live-dot" title="Live ${escapeHtml(formatPrice(live.v, live.currency))}/share${live.t ? " @ " + escapeHtml(live.t) : ""}">● live</span>`
+
+    const badge = `<span class="asset-badge asset-${escapeHtml(h.assetClass || "other")}">${escapeHtml(ASSET_CLASS_LABEL.get(h.assetClass) || "Other")}</span>`;
+    const symbolBit = h.symbol
+      ? `<span class="asset-symbol">${escapeHtml(normalizeSymbol(h.symbol))}</span>`
       : "";
+    const accountBit = h.account
+      ? `<span class="asset-account">${escapeHtml(h.account)}</span>`
+      : "";
+    const liveTag = live
+      ? `<span class="live-dot" title="Live ${escapeHtml(formatPrice(live.v, live.currency))}/share${live.t ? " @ " + escapeHtml(live.t) : ""}">● live</span>`
+      : "";
+
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td class="sym">${escapeHtml(h.symbol)}${liveTag}</td>
-      <td>${escapeHtml(h.name)}</td>
-      <td class="num">${h.quantity ?? 0}</td>
-      <td class="num">${formatMoney(rowCost)}</td>
+      <td class="asset-cell">
+        <span class="asset-name">${escapeHtml(h.name)}</span>
+        <span class="asset-meta">${badge}${symbolBit}${accountBit}${liveTag}</span>
+      </td>
+      <td class="num">${h.quantity ? escapeHtml(String(h.quantity)) : "—"}</td>
+      <td class="num">${formatMoney(rowInvested)}</td>
       <td class="num${live ? " is-live" : ""}">${formatMoney(rowCurrent)}</td>
       <td class="num ${rowPnl >= 0 ? "pnl-positive" : "pnl-negative"}">${formatSignedMoney(rowPnl)}</td>
       <td class="row-actions">
-        <button type="button" class="remove-holding" data-symbol="${escapeHtml(h.symbol)}" aria-label="Remove ${escapeHtml(h.symbol)}">×</button>
+        <button type="button" class="edit-holding" data-key="${escapeHtml(key)}" aria-label="Edit ${escapeHtml(h.name)}">Edit</button>
+        <button type="button" class="remove-holding" data-key="${escapeHtml(key)}" aria-label="Remove ${escapeHtml(h.name)}">×</button>
       </td>
     `;
     tbody.append(tr);
   }
-  const pnl = current - cost;
-  const pnlPct = cost === 0 ? 0 : (pnl / cost) * 100;
+  const pnl = current - invested;
+  // No invested base → a percentage is undefined; show "—" rather than a
+  // misleading "+0.0%" next to a real money gain.
+  const pctText = invested === 0 ? "—" : formatPct((pnl / invested) * 100);
   document.getElementById("holdings-total").textContent = formatMoney(current);
-  document.getElementById("holdings-cost").textContent = formatMoney(cost);
+  document.getElementById("holdings-cost").textContent = formatMoney(invested);
   const pnlEl = document.getElementById("holdings-pnl");
-  pnlEl.textContent = `${formatSignedMoney(pnl)} (${formatPct(pnlPct)})`;
+  pnlEl.textContent = `${formatSignedMoney(pnl)} (${pctText})`;
   pnlEl.className = pnl >= 0 ? "pnl-positive" : "pnl-negative";
+}
+
+// --- Add / edit holding form ----------------------------------------------
+let editingKey = null;
+
+function resetHoldingForm() {
+  const form = document.getElementById("add-holding");
+  form.reset();
+  form.currentValueManual.placeholder = "auto";
+  editingKey = null;
+  document.getElementById("holding-form-title").textContent = "Add a holding";
+  document.getElementById("holding-submit").textContent = "Add holding";
+  document.getElementById("holding-cancel").hidden = true;
+}
+
+// Prefill the form (from a proposal's "I bought this") without entering edit
+// mode — it's still a brand-new holding the user is adding.
+function prefillHolding(seed) {
+  const form = document.getElementById("add-holding");
+  resetHoldingForm();
+  const known = ASSET_CLASS_LABEL.has(seed.assetClass);
+  form.assetClass.value = known
+    ? seed.assetClass
+    : seed.symbol
+      ? "stock"
+      : "other";
+  form.name.value = seed.name || "";
+  form.symbol.value = seed.symbol ? normalizeSymbol(seed.symbol) : "";
+  // Reveal the Portfolio panel synchronously — `hashchange` (which drives
+  // showTab) fires async, so focus/scroll would otherwise hit a hidden element.
+  location.hash = "portfolio";
+  showTab("portfolio");
+  form.amountInvested.focus();
+  form.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function startEditHolding(key) {
+  const h = holdingsByKey.get(key);
+  if (!h) return;
+  const form = document.getElementById("add-holding");
+  form.assetClass.value = ASSET_CLASS_LABEL.has(h.assetClass)
+    ? h.assetClass
+    : "other";
+  form.name.value = h.name || "";
+  form.symbol.value = h.symbol ? normalizeSymbol(h.symbol) : "";
+  form.quantity.value = h.quantity ?? "";
+  form.amountInvested.value = h.amountInvested ?? "";
+  form.currentValueManual.value =
+    typeof h.currentValueManual === "number" ? h.currentValueManual : "";
+  // When a live quote is driving this row's value, a manual figure would be
+  // ignored — show the live value as the placeholder so that's clear.
+  const { live, value } = holdingCurrentValue(h);
+  form.currentValueManual.placeholder = live
+    ? `${formatMoney(value)} (live)`
+    : "auto";
+  form.account.value = h.account || "";
+  form.purchaseDate.value = h.purchaseDate || "";
+  editingKey = key;
+  document.getElementById("holding-form-title").textContent = "Edit holding";
+  document.getElementById("holding-submit").textContent = "Save changes";
+  document.getElementById("holding-cancel").hidden = false;
+  form.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function readHoldingForm(form) {
+  const data = new FormData(form);
+  const name = String(data.get("name") || "").trim();
+  if (!name) return null;
+  const symbolRaw = String(data.get("symbol") || "").trim();
+  const accountRaw = String(data.get("account") || "").trim();
+  const manualRaw = String(data.get("currentValueManual") || "").trim();
+  const qtyRaw = String(data.get("quantity") || "").trim();
+  const holding = {
+    assetClass: String(data.get("assetClass") || "other"),
+    name,
+    amountInvested: Number(data.get("amountInvested")) || 0,
+    currency: activeCurrency,
+  };
+  if (symbolRaw) holding.symbol = normalizeSymbol(symbolRaw);
+  if (qtyRaw) holding.quantity = Number(qtyRaw) || 0;
+  if (manualRaw) holding.currentValueManual = Number(manualRaw) || 0;
+  if (accountRaw) holding.account = accountRaw;
+  const purchaseDate = String(data.get("purchaseDate") || "").trim();
+  if (purchaseDate) holding.purchaseDate = purchaseDate;
+  return holding;
 }
 
 function setupHoldingControls() {
   const form = document.getElementById("add-holding");
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const data = new FormData(form);
-    const symbol = String(data.get("symbol") || "")
-      .trim()
-      .toUpperCase();
-    if (!symbol) return;
-    await holdingsStore.put({
-      symbol,
-      name: String(data.get("name") || "").trim(),
-      quantity: Number(data.get("quantity")) || 0,
-      costBasis: Number(data.get("costBasis")) || 0,
-      currentValue: Number(data.get("currentValue")) || 0,
-    });
-    form.reset();
+    const holding = readHoldingForm(form);
+    if (!holding) return;
+    const newKey = holdingKey(holding);
+    // Editing with an unchanged key just replaces that record. Otherwise (a new
+    // add, or an edit whose key now points elsewhere) never overwrite a different
+    // holding sitting at the target key — merge into it so nothing is lost.
+    if (editingKey === newKey) {
+      await holdingsStore.put(holding);
+    } else {
+      const existing = holdingsByKey.get(newKey);
+      if (editingKey) await holdingsStore.remove(editingKey);
+      await holdingsStore.put(
+        existing ? mergeHoldings(existing, holding) : holding,
+      );
+    }
+    resetHoldingForm();
     await refreshHoldings();
   });
 
   document
+    .getElementById("holding-cancel")
+    .addEventListener("click", resetHoldingForm);
+
+  document
     .getElementById("holdings-body")
     .addEventListener("click", async (event) => {
-      const btn = event.target.closest(".remove-holding");
-      if (!btn) return;
-      await holdingsStore.remove(btn.dataset.symbol);
+      const editBtn = event.target.closest(".edit-holding");
+      if (editBtn) {
+        startEditHolding(editBtn.dataset.key);
+        return;
+      }
+      const removeBtn = event.target.closest(".remove-holding");
+      if (!removeBtn) return;
+      if (editingKey === removeBtn.dataset.key) resetHoldingForm();
+      await holdingsStore.remove(removeBtn.dataset.key);
       await refreshHoldings();
     });
 }
@@ -356,6 +626,19 @@ function renderTopPicks(picks) {
     reason.className = "pick-reason";
     reason.textContent = pick.rationale ?? pick.whyItFits ?? pick.reason ?? "";
     li.append(sym, reason);
+
+    const actions = document.createElement("div");
+    actions.className = "pick-actions";
+    const buy = document.createElement("button");
+    buy.type = "button";
+    buy.className = "pick-buy";
+    buy.textContent = "I bought this";
+    buy.dataset.name = pick.name || pick.symbol || "";
+    if (pick.symbol) buy.dataset.symbol = pick.symbol;
+    if (pick.assetClass) buy.dataset.assetClass = pick.assetClass;
+    actions.append(buy);
+    li.append(actions);
+
     list.append(li);
   }
   body.append(list);
@@ -377,6 +660,18 @@ async function setupProposals(staticPicks) {
   const bridge = window.OverseerBridge;
   const btn = document.getElementById("find-opportunities");
   const status = document.getElementById("opportunities-status");
+
+  document
+    .getElementById("top-picks-body")
+    .addEventListener("click", (event) => {
+      const buy = event.target.closest(".pick-buy");
+      if (!buy) return;
+      prefillHolding({
+        name: buy.dataset.name,
+        symbol: buy.dataset.symbol,
+        assetClass: buy.dataset.assetClass,
+      });
+    });
 
   if (!bridge || !bridge.embedded) {
     btn.disabled = true;
@@ -660,6 +955,7 @@ async function init() {
     updateCurrencyUI();
     setupHoldingControls();
     await setupProposals(topPicks);
+    await migrateHoldings();
     await ensureSeeded();
     await refreshHoldings();
     await refreshLive();

@@ -114,49 +114,104 @@
             <table id="holdings-table">
               <thead>
                 <tr>
-                  <th>Symbol</th>
-                  <th>Name</th>
+                  <th>Asset</th>
                   <th class="num">Qty</th>
-                  <th class="num">Cost basis</th>
+                  <th class="num">Invested</th>
                   <th class="num">Current</th>
                   <th class="num">Gain / Loss</th>
-                  <th aria-label="Remove"></th>
+                  <th aria-label="Actions"></th>
                 </tr>
               </thead>
               <tbody id="holdings-body"></tbody>
             </table>
           </div>
           <form id="add-holding" class="add-holding" autocomplete="off">
-            <input
-              name="symbol"
-              placeholder="Symbol"
-              required
-              maxlength="12"
-              aria-label="Symbol"
-            />
-            <input name="name" placeholder="Name" aria-label="Name" />
-            <input
-              name="quantity"
-              type="number"
-              step="any"
-              placeholder="Qty"
-              aria-label="Quantity"
-            />
-            <input
-              name="costBasis"
-              type="number"
-              step="any"
-              placeholder="Cost basis"
-              aria-label="Cost basis"
-            />
-            <input
-              name="currentValue"
-              type="number"
-              step="any"
-              placeholder="Current"
-              aria-label="Current value"
-            />
-            <button type="submit">Add holding</button>
+            <p id="holding-form-title" class="add-holding-title">
+              Add a holding
+            </p>
+            <div class="add-holding-grid">
+              <label class="field">
+                <span>Type</span>
+                <select name="assetClass">
+                  <option value="stock">Stock</option>
+                  <option value="etf">ETF</option>
+                  <option value="fund">Fund</option>
+                  <option value="bond">Bond</option>
+                  <option value="crypto">Crypto</option>
+                  <option value="cash">Cash</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Name</span>
+                <input
+                  name="name"
+                  required
+                  maxlength="60"
+                  placeholder="e.g. Apple"
+                />
+              </label>
+              <label class="field">
+                <span>Symbol <em>(optional)</em></span>
+                <input name="symbol" maxlength="12" placeholder="AAPL" />
+              </label>
+              <label class="field">
+                <span>Quantity <em>(optional)</em></span>
+                <input
+                  name="quantity"
+                  type="number"
+                  step="any"
+                  min="0"
+                  placeholder="0"
+                />
+              </label>
+              <label class="field">
+                <span>Amount invested</span>
+                <span class="input-wrap">
+                  <span class="prefix currency-prefix">$</span>
+                  <input
+                    name="amountInvested"
+                    type="number"
+                    step="any"
+                    min="0"
+                    required
+                    placeholder="0"
+                  />
+                </span>
+              </label>
+              <label class="field">
+                <span>Current value <em>(optional)</em></span>
+                <span class="input-wrap">
+                  <span class="prefix currency-prefix">$</span>
+                  <input
+                    name="currentValueManual"
+                    type="number"
+                    step="any"
+                    min="0"
+                    placeholder="auto"
+                  />
+                </span>
+              </label>
+              <label class="field">
+                <span>Account <em>(optional)</em></span>
+                <input name="account" maxlength="40" placeholder="e.g. ISA" />
+              </label>
+              <label class="field">
+                <span>Purchase date <em>(optional)</em></span>
+                <input name="purchaseDate" type="date" />
+              </label>
+            </div>
+            <div class="add-holding-actions">
+              <button type="submit" id="holding-submit">Add holding</button>
+              <button
+                type="button"
+                id="holding-cancel"
+                class="ghost-btn"
+                hidden
+              >
+                Cancel
+              </button>
+            </div>
           </form>
           <div class="holdings-totals">
             <div class="total-cell">

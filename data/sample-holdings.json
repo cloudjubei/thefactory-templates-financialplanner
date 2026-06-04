@@ -1,23 +1,45 @@
 [
   {
-    "symbol": "VOO",
+    "assetClass": "etf",
     "name": "Vanguard S&P 500 ETF",
+    "symbol": "VOO",
     "quantity": 10,
-    "costBasis": 4200,
-    "currentValue": 4850
+    "amountInvested": 4200,
+    "currency": "USD",
+    "currentValueManual": 4850
   },
   {
-    "symbol": "VTI",
-    "name": "Vanguard Total Stock Market ETF",
-    "quantity": 5,
-    "costBasis": 1100,
-    "currentValue": 1280
+    "assetClass": "stock",
+    "name": "Apple",
+    "symbol": "AAPL",
+    "quantity": 12,
+    "amountInvested": 1800,
+    "currency": "USD",
+    "currentValueManual": 2100
   },
   {
-    "symbol": "BND",
+    "assetClass": "bond",
     "name": "Vanguard Total Bond Market ETF",
+    "symbol": "BND",
     "quantity": 20,
-    "costBasis": 1600,
-    "currentValue": 1560
+    "amountInvested": 1600,
+    "currency": "USD",
+    "currentValueManual": 1560
+  },
+  {
+    "assetClass": "crypto",
+    "name": "Bitcoin",
+    "symbol": "BTC",
+    "quantity": 0.05,
+    "amountInvested": 1500,
+    "currency": "USD",
+    "currentValueManual": 2300
+  },
+  {
+    "assetClass": "cash",
+    "name": "Emergency fund",
+    "amountInvested": 5000,
+    "currency": "USD",
+    "currentValueManual": 5000
   }
 ]
