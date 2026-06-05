@@ -184,6 +184,79 @@ body {
   height: 220px;
 }
 
+/* ---- Forecast ------------------------------------------------------------ */
+.forecast-basis {
+  margin: 0 0 16px;
+  color: var(--muted);
+}
+.forecast-basis strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.forecast-hint {
+  color: var(--muted);
+  font-size: 14px;
+}
+.forecast-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 4px;
+}
+@media (min-width: 560px) {
+  .forecast-form {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+.forecast-form .field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.forecast-form .field > span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.forecast-form input,
+.forecast-form select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+.forecast-form input:focus,
+.forecast-form select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.forecast-form .input-wrap {
+  display: flex;
+  width: 100%;
+  padding: 0 10px;
+}
+.forecast-form .input-wrap input {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 8px 2px;
+}
+.forecast-scenarios .stat-label em {
+  font-style: normal;
+  color: var(--muted);
+  font-weight: 500;
+}
+.forecast-note {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 /* ---- Top picks ----------------------------------------------------------- */
 
 .top-picks-empty {
@@ -626,6 +699,9 @@ td.num.is-live {
   background: var(--accent);
   color: #fff;
 }
+.tab-btn[hidden] {
+  display: none;
+}
 .tab-main {
   display: flex;
   flex-direction: column;
@@ -695,4 +771,184 @@ td.num.is-live {
   font-size: 13px;
   color: var(--muted);
   min-height: 1em;
+}
+
+/* ---- Start onboarding ---------------------------------------------------- */
+.start-card {
+  max-width: 560px;
+}
+.start-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.start-form .field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.start-form .field > span {
+  font-size: 13px;
+  font-weight: 500;
+}
+.start-form .field em {
+  font-style: normal;
+  font-weight: 400;
+  color: var(--muted);
+}
+.start-form input,
+.start-form select {
+  width: 100%;
+  padding: 9px 10px;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+.start-form input:focus,
+.start-form select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.start-form .input-wrap {
+  display: flex;
+  width: 100%;
+  padding: 0 10px;
+}
+.start-form .input-wrap input {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 9px 2px;
+}
+.start-actions {
+  margin-top: 4px;
+}
+.start-actions button {
+  width: 100%;
+  padding: 11px 18px;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+}
+.start-actions button:hover {
+  background: var(--accent-strong);
+}
+
+/* ---- Profile foot (re-run setup) ----------------------------------------- */
+.profile-foot {
+  margin: 14px 0 0;
+}
+.link-btn {
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.link-btn:hover {
+  color: var(--accent-strong);
+}
+
+/* ---- Home (digest + advisor) --------------------------------------------- */
+.home-whatsnew {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 14px;
+  font-weight: 600;
+}
+.digest-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (max-width: 560px) {
+  .digest-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.digest-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 14px;
+  border-radius: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+.digest-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.digest-tile strong {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.digest-delta,
+.digest-sub {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.digest-sub {
+  color: var(--muted);
+}
+.advice-actions {
+  margin-bottom: 4px;
+}
+.advice-actions button {
+  padding: 8px 16px;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+}
+.advice-actions button:hover {
+  background: var(--accent-strong);
+}
+.advice-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.advice-empty {
+  padding: 20px;
+  border: 1px dashed var(--border);
+  border-radius: 11px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.advice-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.advice-list li {
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--bg);
+}
+.advice-title {
+  font-weight: 650;
+}
+.advice-detail {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 14px;
 }

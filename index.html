@@ -10,6 +10,7 @@
       defer
     ></script>
     <script src="bridge.js" defer></script>
+    <script src="forecast.js" defer></script>
     <script src="app.js" defer></script>
   </head>
   <body>
@@ -24,16 +25,71 @@
     <nav class="tabbar" id="tabbar" role="tablist" aria-label="Sections"></nav>
 
     <main class="tab-main">
-      <!-- Start (built in a later step) -->
+      <!-- Start (guided onboarding wizard) -->
       <section id="tab-start" class="tab-panel" role="tabpanel" hidden>
-        <div class="card placeholder-card">
-          <h2>Start here</h2>
-          <p>
-            A guided setup that turns "how much I have / can save each month"
-            and your interests into a starter plan and first proposals.
-          </p>
-          <p class="placeholder-note">Coming in a later step.</p>
-        </div>
+        <section class="card start-card" aria-labelledby="start-h">
+          <div class="card-head">
+            <h2 id="start-h">Let's build your plan</h2>
+            <p class="card-sub">
+              Three quick questions to set up your profile and find your first
+              ideas. It's all editable later — this is a long-term, risk-driven
+              starting point.
+            </p>
+          </div>
+
+          <form id="start-form" class="start-form" autocomplete="off">
+            <label class="field">
+              <span>How much do you have to invest now?</span>
+              <span class="input-wrap">
+                <span class="prefix currency-prefix">$</span>
+                <input
+                  name="lumpSum"
+                  type="number"
+                  min="0"
+                  step="100"
+                  placeholder="0"
+                />
+              </span>
+            </label>
+            <label class="field">
+              <span>How much can you add each month?</span>
+              <span class="input-wrap">
+                <span class="prefix currency-prefix">$</span>
+                <input
+                  name="monthly"
+                  type="number"
+                  min="0"
+                  step="50"
+                  placeholder="0"
+                />
+              </span>
+            </label>
+            <label class="field">
+              <span>Risk appetite</span>
+              <select name="risk">
+                <option value="cautious">
+                  Cautious — steadier, lower swings
+                </option>
+                <option value="balanced">Balanced — a mix</option>
+                <option value="adventurous">
+                  Adventurous — higher risk &amp; reward
+                </option>
+              </select>
+            </label>
+            <label class="field">
+              <span>What are you interested in? <em>(optional)</em></span>
+              <input
+                name="preferences"
+                maxlength="80"
+                placeholder="e.g. clean energy, tech"
+              />
+            </label>
+            <div class="start-actions">
+              <button type="submit" id="start-submit">Build my plan</button>
+            </div>
+            <p id="start-status" class="form-status" role="status"></p>
+          </form>
+        </section>
       </section>
 
       <!-- Profile -->
@@ -63,6 +119,11 @@
             <button type="submit">Save profile</button>
           </form>
           <p id="profile-status" class="form-status" role="status"></p>
+          <p class="profile-foot">
+            <button type="button" id="redo-onboarding" class="link-btn">
+              Re-run the guided setup
+            </button>
+          </p>
         </div>
       </section>
 
@@ -232,11 +293,91 @@
 
       <!-- Forecast (built in a later step) -->
       <section id="tab-forecast" class="tab-panel" role="tabpanel" hidden>
-        <div class="card placeholder-card">
-          <h2>Forecast</h2>
-          <p>Project what your current portfolio could become over time.</p>
-          <p class="placeholder-note">Coming in a later step.</p>
-        </div>
+        <section class="card forecast" aria-labelledby="forecast-h">
+          <div class="card-head">
+            <h2 id="forecast-h">Forecast</h2>
+            <p class="card-sub">
+              Where your portfolio could grow, based on your risk profile.
+            </p>
+          </div>
+
+          <p class="forecast-basis">
+            Starting from your portfolio:
+            <strong id="forecast-start">—</strong>
+            <span id="forecast-empty-hint" class="forecast-hint" hidden>
+              — add holdings to forecast your own portfolio, or use the
+              Calculator for a what-if.
+            </span>
+          </p>
+
+          <form id="forecast-form" class="forecast-form" autocomplete="off">
+            <label class="field">
+              <span>Monthly contribution</span>
+              <span class="input-wrap">
+                <span class="prefix currency-prefix">$</span>
+                <input
+                  id="forecast-monthly"
+                  type="number"
+                  min="0"
+                  step="50"
+                  value="0"
+                />
+              </span>
+            </label>
+            <label class="field">
+              <span>Years</span>
+              <input
+                id="forecast-years"
+                type="number"
+                min="1"
+                max="60"
+                step="1"
+                value="20"
+              />
+            </label>
+            <label class="field">
+              <span>Risk</span>
+              <select id="forecast-risk">
+                <option value="cautious">Cautious</option>
+                <option value="balanced">Balanced</option>
+                <option value="adventurous">Adventurous</option>
+              </select>
+            </label>
+          </form>
+
+          <div class="stat-row forecast-scenarios">
+            <div class="stat">
+              <span class="stat-label"
+                >Conservative <em id="forecast-rate-cons"></em
+              ></span>
+              <span id="forecast-cons" class="stat-value">—</span>
+            </div>
+            <div class="stat stat-primary">
+              <span class="stat-label"
+                >Expected <em id="forecast-rate-exp"></em
+              ></span>
+              <span id="forecast-exp" class="stat-value">—</span>
+            </div>
+            <div class="stat">
+              <span class="stat-label"
+                >Optimistic <em id="forecast-rate-opt"></em
+              ></span>
+              <span id="forecast-opt" class="stat-value stat-growth">—</span>
+            </div>
+          </div>
+
+          <div class="chart-wrap">
+            <canvas
+              id="forecast-chart"
+              aria-label="Projected portfolio value over time across conservative, expected and optimistic scenarios"
+            ></canvas>
+          </div>
+
+          <p class="forecast-note">
+            Deterministic estimates from fixed per-risk return assumptions — not
+            financial advice.
+          </p>
+        </section>
       </section>
 
       <!-- News (built in a later step) -->
@@ -338,16 +479,31 @@
         </section>
       </section>
 
-      <!-- Home (built in a later step) -->
+      <!-- Home (daily digest + advisor) -->
       <section id="tab-home" class="tab-panel" role="tabpanel" hidden>
-        <div class="card placeholder-card">
-          <h2>Home</h2>
-          <p>
-            Your daily digest — what changed, what to act on, and new
-            opportunities the AI found.
-          </p>
-          <p class="placeholder-note">Coming in a later step.</p>
-        </div>
+        <p id="home-whatsnew" class="home-whatsnew" role="status" hidden></p>
+
+        <section class="card home-digest" aria-labelledby="home-h">
+          <div class="card-head">
+            <h2 id="home-h">Your daily digest</h2>
+            <p class="card-sub">Where things stand today.</p>
+          </div>
+          <div id="home-digest-body" class="digest-grid"></div>
+        </section>
+
+        <section class="card home-advice" aria-labelledby="advice-h">
+          <div class="card-head">
+            <h2 id="advice-h">What to consider next</h2>
+            <p class="card-sub">AI-suggested moves, refreshed daily.</p>
+          </div>
+          <div class="advice-actions">
+            <button type="button" id="refresh-advice">Refresh advice</button>
+          </div>
+          <p id="advice-status" class="form-status" role="status"></p>
+          <div id="advice-body" class="advice-empty">
+            <p>Open this project in Overseer to get personalised advice.</p>
+          </div>
+        </section>
       </section>
     </main>
 

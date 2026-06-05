@@ -41,8 +41,9 @@
     deleteData: (payload) => call("data.delete", payload),
     // The records of every live-data source this project is subscribed to.
     readLiveData: () => call("live-data.read", undefined),
-    // Run the opportunity-analysis job (web search + LLM). Slow, so allow 90s.
-    runOpportunities: () =>
-      call("analysis.run-opportunities", undefined, 90000),
+    // Run a named analysis job (web search + LLM); it writes records this app
+    // re-reads via data.query. Slow, so allow 90s.
+    runJob: (jobName, params) =>
+      call("analysis.run", { jobName: jobName, params: params }, 90000),
   };
 })();

@@ -14,6 +14,9 @@ const CURRENCY_SYMBOL = { USD: "$", GBP: "£", EUR: "€", PLN: "zł" };
 let activeCountry = DEFAULT_COUNTRY;
 let activeCurrency = "USD";
 let recalcCalculator = null;
+let recalcForecast = null;
+// The latest saved profile, kept in memory for the Home digest + advisor.
+let appProfile = {};
 
 const currencyFmtCache = new Map();
 function currencyFormatter(currency, digits) {
@@ -92,6 +95,7 @@ async function saveProfile(patch) {
       // ignore storage errors (private mode, etc.)
     }
   }
+  appProfile = next;
   return next;
 }
 
@@ -301,6 +305,8 @@ async function migrateHoldings() {
 
 async function refreshHoldings() {
   renderHoldings(await holdingsStore.list());
+  if (recalcForecast) recalcForecast();
+  renderHomeDigest();
 }
 
 // --- Live data (read-only, via the bridge; filtered to the active country) --
@@ -401,6 +407,10 @@ async function refreshLive() {
 // The holdings currently rendered, by key — lets row actions (edit/remove)
 // resolve the full record without re-querying the store.
 let holdingsByKey = new Map();
+// Total current value of all holdings (the Forecast tab's starting base).
+let portfolioCurrentValue = 0;
+// Total amount invested across all holdings (the Home digest's delta base).
+let portfolioInvested = 0;
 
 // A holding's current value: live (price × qty) for market assets with a quote,
 // else the manual figure, else fall back to the amount invested (flat).
@@ -462,6 +472,8 @@ function renderHoldings(holdings) {
     `;
     tbody.append(tr);
   }
+  portfolioCurrentValue = current;
+  portfolioInvested = invested;
   const pnl = current - invested;
   // No invested base → a percentage is undefined; show "—" rather than a
   // misleading "+0.0%" next to a real money gain.
@@ -685,28 +697,324 @@ async function setupProposals(staticPicks) {
   const existing = await loadLatestOpportunities();
   renderTopPicks(existing && existing.length ? existing : staticPicks);
 
-  btn.addEventListener("click", async () => {
-    const original = btn.textContent;
+  btn.addEventListener("click", findProposals);
+}
+
+// Run the opportunities job, then re-read `opportunity/latest` and render it.
+// Shared by the Proposals "Find" button and the Start onboarding wizard, so it
+// drives its own button/status state and never throws to the caller.
+async function findProposals() {
+  const bridge = window.OverseerBridge;
+  if (!bridge || !bridge.embedded) return;
+  const btn = document.getElementById("find-opportunities");
+  const status = document.getElementById("opportunities-status");
+  const original = btn ? btn.textContent : "";
+  if (btn) {
     btn.disabled = true;
     btn.textContent = "Finding…";
+  }
+  if (status)
+    status.textContent =
+      "Searching the web and analysing — this can take a moment…";
+  try {
+    await bridge.runJob("opportunities");
+    // The job wrote `opportunity/latest`; re-read it rather than depending on
+    // the generic job route's return shape.
+    const items = (await loadLatestOpportunities()) || [];
+    renderTopPicks(items);
     if (status)
-      status.textContent =
-        "Searching the web and analysing — this can take a moment…";
-    try {
-      const result = await bridge.runOpportunities();
-      const items = (result && result.items) || [];
-      renderTopPicks(items);
-      if (status)
-        status.textContent = items.length
-          ? ""
-          : "No opportunities found — try adjusting your profile.";
-    } catch (err) {
-      if (status)
-        status.textContent = `Could not run analysis: ${err && err.message ? err.message : err}`;
-    } finally {
+      status.textContent = items.length
+        ? ""
+        : "No opportunities found — try adjusting your profile.";
+  } catch (err) {
+    if (status)
+      status.textContent = `Could not run analysis: ${err && err.message ? err.message : err}`;
+  } finally {
+    if (btn) {
       btn.disabled = false;
       btn.textContent = original;
     }
+  }
+}
+
+// --- Home (daily digest + advisor) ----------------------------------------
+const ADVICE_STALE_MS = 24 * 60 * 60 * 1000;
+const HOME_SEEN_LS_KEY = "planner.homeSeen.v1";
+let advisorAutoRanThisSession = false;
+
+async function loadLatestAdvice() {
+  const bridge = window.OverseerBridge;
+  if (!bridge || !bridge.embedded) return null;
+  try {
+    const recs = await bridge.queryData({ type: "advice", key: "latest" });
+    return (recs && recs[0] && recs[0].content) || null;
+  } catch {
+    return null;
+  }
+}
+
+async function loadHomeSeen() {
+  const bridge = window.OverseerBridge;
+  if (bridge && bridge.embedded) {
+    try {
+      const recs = await bridge.queryData({ type: "home-meta", key: "seen" });
+      return (recs && recs[0] && recs[0].content) || {};
+    } catch {
+      return {};
+    }
+  }
+  try {
+    return JSON.parse(localStorage.getItem(HOME_SEEN_LS_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+async function markHomeSeen(patch) {
+  const next = { ...(await loadHomeSeen()), ...patch };
+  const bridge = window.OverseerBridge;
+  if (bridge && bridge.embedded) {
+    await bridge.putData({ type: "home-meta", key: "seen", content: next });
+  } else {
+    try {
+      localStorage.setItem(HOME_SEEN_LS_KEY, JSON.stringify(next));
+    } catch {
+      // ignore storage errors
+    }
+  }
+}
+
+// Deterministic digest from the current portfolio + forecast — no LLM, instant.
+function renderHomeDigest() {
+  const body = document.getElementById("home-digest-body");
+  if (!body) return;
+  const holdings = [...holdingsByKey.values()];
+  const invested = portfolioInvested;
+  const current = portfolioCurrentValue;
+  const pnl = current - invested;
+  const pnlPct = invested === 0 ? 0 : (pnl / invested) * 100;
+
+  let mover = null;
+  for (const h of holdings) {
+    const inv = Number(h.amountInvested) || 0;
+    if (inv === 0) continue;
+    const pct = ((holdingCurrentValue(h).value - inv) / inv) * 100;
+    if (!mover || Math.abs(pct) > Math.abs(mover.pct)) mover = { h, pct };
+  }
+
+  const monthly = Number(appProfile.monthlyContribution) || 0;
+  const risk = RISK_RETURN_BANDS[appProfile.risk]
+    ? appProfile.risk
+    : FORECAST_DEFAULT_RISK;
+  const forecast = buildForecast({
+    startingValue: current,
+    monthly,
+    years: FORECAST_DEFAULT_YEARS,
+    risk,
+  });
+
+  const moverTile = mover
+    ? `<strong class="${mover.pct >= 0 ? "pnl-positive" : "pnl-negative"}">${escapeHtml(mover.h.name)} ${formatPct(mover.pct)}</strong>`
+    : `<strong>—</strong>`;
+
+  body.innerHTML = `
+    <div class="digest-tile">
+      <span class="digest-label">Portfolio value</span>
+      <strong>${formatMoney(current)}</strong>
+      <span class="digest-delta ${pnl >= 0 ? "pnl-positive" : "pnl-negative"}">${formatSignedMoney(pnl)} (${invested === 0 ? "—" : formatPct(pnlPct)})</span>
+    </div>
+    <div class="digest-tile">
+      <span class="digest-label">Biggest mover</span>
+      ${moverTile}
+    </div>
+    <div class="digest-tile">
+      <span class="digest-label">On track for (${FORECAST_DEFAULT_YEARS}y, expected)</span>
+      <strong>${formatMoney(forecast.expected.finalValue)}</strong>
+      <span class="digest-sub">${monthly > 0 ? `with ${formatMoney(monthly)}/mo` : "from your portfolio"}</span>
+    </div>
+  `;
+}
+
+function renderAdvice(items) {
+  const body = document.getElementById("advice-body");
+  if (!body) return;
+  if (!Array.isArray(items) || items.length === 0) {
+    body.className = "advice-empty";
+    body.innerHTML = window.OverseerBridge?.embedded
+      ? `<p>No advice yet — use "Refresh advice" to generate some.</p>`
+      : `<p>Open this project in Overseer to get personalised advice.</p>`;
+    return;
+  }
+  body.className = "";
+  const list = document.createElement("ul");
+  list.className = "advice-list";
+  for (const item of items) {
+    const li = document.createElement("li");
+    const title = document.createElement("div");
+    title.className = "advice-title";
+    title.textContent = item.title ?? "";
+    const detail = document.createElement("div");
+    detail.className = "advice-detail";
+    detail.textContent = item.detail ?? "";
+    li.append(title, detail);
+    list.append(li);
+  }
+  body.innerHTML = "";
+  body.append(list);
+}
+
+// Run the advisor job (diffed against the latest proposals), then re-read
+// `advice/latest`. Self-manages the refresh button + status; never throws.
+// `adviceInFlight` makes it reentrancy-safe: a manual click + an auto-run (or
+// two) can never launch concurrent advisor jobs.
+let adviceInFlight = false;
+async function refreshAdvice() {
+  const bridge = window.OverseerBridge;
+  if (!bridge || !bridge.embedded || adviceInFlight) return;
+  adviceInFlight = true;
+  const btn = document.getElementById("refresh-advice");
+  const status = document.getElementById("advice-status");
+  const original = btn ? btn.textContent : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Thinking…";
+  }
+  if (status) status.textContent = "Reviewing your portfolio…";
+  try {
+    const opportunityItems = (await loadLatestOpportunities()) || [];
+    await bridge.runJob("advisor", {
+      latestOpportunity: { items: opportunityItems },
+    });
+    const advice = await loadLatestAdvice();
+    renderAdvice(advice ? advice.items : []);
+    await updateWhatsNew(advice);
+    if (status) status.textContent = "";
+  } catch (err) {
+    if (status)
+      status.textContent = `Could not refresh advice: ${err && err.message ? err.message : err}`;
+  } finally {
+    adviceInFlight = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  }
+}
+
+// "What's new since last visit": flag when the advice is newer than last seen,
+// then record what we've now shown.
+async function updateWhatsNew(advice) {
+  const banner = document.getElementById("home-whatsnew");
+  if (!banner) return;
+  const adviceAt = advice && advice.generatedAt;
+  const seen = await loadHomeSeen();
+  if (
+    adviceAt &&
+    seen.adviceGeneratedAt &&
+    adviceAt !== seen.adviceGeneratedAt
+  ) {
+    banner.textContent = "✨ New advice since your last visit.";
+    banner.hidden = false;
+  } else {
+    banner.hidden = true;
+  }
+  if (adviceAt) await markHomeSeen({ adviceGeneratedAt: adviceAt });
+}
+
+// Render existing advice on open, surface "what's new", and auto-run the advisor
+// once per session when the advice is missing or >24h stale.
+async function handleHomeOpen() {
+  renderHomeDigest();
+  // Claim the once-per-session auto-run synchronously, before any await, so a
+  // rapid second Home entry can't also trigger it.
+  const mayAutoRun =
+    !advisorAutoRanThisSession &&
+    !!(window.OverseerBridge && window.OverseerBridge.embedded);
+  if (mayAutoRun) advisorAutoRanThisSession = true;
+
+  const advice = await loadLatestAdvice();
+  renderAdvice(advice ? advice.items : []);
+  await updateWhatsNew(advice);
+
+  if (!mayAutoRun) return;
+  const at = advice && advice.generatedAt ? Date.parse(advice.generatedAt) : 0;
+  if (!at || Date.now() - at > ADVICE_STALE_MS) refreshAdvice();
+}
+
+function setupHome() {
+  const btn = document.getElementById("refresh-advice");
+  if (btn) {
+    if (!window.OverseerBridge || !window.OverseerBridge.embedded) {
+      btn.disabled = true;
+    } else {
+      btn.addEventListener("click", refreshAdvice);
+    }
+  }
+  renderHomeDigest();
+}
+
+// --- Start onboarding -----------------------------------------------------
+// Whether the guided setup has been completed (drives the Start tab's
+// visibility + the default landing tab). Set once the wizard is submitted.
+let onboarded = false;
+
+function isOnboarded(profile) {
+  return !!profile.onboarded;
+}
+
+// Push the saved profile back into the Profile + Forecast inputs so they stay
+// consistent after the wizard writes them.
+function applyProfileToForms(profile) {
+  const pf = document.getElementById("profile-form");
+  if (pf) {
+    pf.risk.value = profile.risk || "balanced";
+    pf.preferences.value = profile.preferences || "";
+  }
+  const fm = document.getElementById("forecast-monthly");
+  if (fm && typeof profile.monthlyContribution === "number") {
+    fm.value = profile.monthlyContribution;
+  }
+  const fr = document.getElementById("forecast-risk");
+  if (fr && RISK_RETURN_BANDS[profile.risk]) fr.value = profile.risk;
+  if (recalcForecast) recalcForecast();
+}
+
+function fillStartForm(profile) {
+  const form = document.getElementById("start-form");
+  if (!form) return;
+  form.lumpSum.value =
+    typeof profile.lumpSum === "number" ? profile.lumpSum : "";
+  form.monthly.value =
+    typeof profile.monthlyContribution === "number"
+      ? profile.monthlyContribution
+      : "";
+  form.risk.value = profile.risk || "balanced";
+  form.preferences.value = profile.preferences || "";
+}
+
+function setupStart(profile) {
+  const form = document.getElementById("start-form");
+  if (!form) return;
+  const status = document.getElementById("start-status");
+  fillStartForm(profile);
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    const saved = await saveProfile({
+      lumpSum: Number(data.get("lumpSum")) || 0,
+      monthlyContribution: Number(data.get("monthly")) || 0,
+      risk: String(data.get("risk") || "balanced"),
+      preferences: String(data.get("preferences") || "").trim(),
+      onboarded: true,
+    });
+    markOnboarded();
+    applyProfileToForms(saved);
+    if (status) status.textContent = "";
+    // Route to Proposals straight away; the job runs while it shows its spinner.
+    location.hash = "proposals";
+    showTab("proposals");
+    findProposals();
   });
 }
 
@@ -725,39 +1033,21 @@ function setupProfile(profile) {
     });
     if (status) status.textContent = "Saved.";
   });
+
+  const redo = document.getElementById("redo-onboarding");
+  if (redo) {
+    redo.addEventListener("click", async () => {
+      // Re-read the latest profile so the wizard doesn't resubmit stale values.
+      fillStartForm(await loadProfile());
+      showStartTabButton();
+      location.hash = "start";
+      showTab("start");
+    });
+  }
 }
 
 // --- Calculator -----------------------------------------------------------
-function projectSeries({ principal, monthly, annualReturnPct, years }) {
-  const r = annualReturnPct / 100 / 12;
-  const labels = [];
-  const balances = [];
-  const contributions = [];
-  const growth = [];
-  for (let y = 0; y <= years; y++) {
-    const n = y * 12;
-    const invested = principal + monthly * n;
-    const compounded = principal * Math.pow(1 + r, n);
-    const contributedWithGrowth =
-      r === 0
-        ? monthly * n
-        : monthly * ((Math.pow(1 + r, n) - 1) / r) * (1 + r);
-    const balance = compounded + contributedWithGrowth;
-    labels.push(`${y}y`);
-    balances.push(balance);
-    contributions.push(invested);
-    growth.push(Math.max(0, balance - invested));
-  }
-  const lastYearMonths = years * 12;
-  return {
-    labels,
-    balances,
-    contributions,
-    growth,
-    finalValue: balances[balances.length - 1],
-    invested: principal + monthly * lastYearMonths,
-  };
-}
+// projectSeries() lives in forecast.js (shared with the Forecast tab).
 
 let calculatorChart;
 
@@ -858,6 +1148,121 @@ function renderCalculator() {
   }
 }
 
+// --- Forecast -------------------------------------------------------------
+let forecastChart;
+
+const FORECAST_LINES = [
+  { key: "optimistic", label: "Optimistic", color: "#16a34a", width: 1.5 },
+  { key: "expected", label: "Expected", color: "#2563eb", width: 2.5 },
+  { key: "conservative", label: "Conservative", color: "#6b7280", width: 1.5 },
+];
+
+function renderForecastChart(forecast) {
+  const canvas = document.getElementById("forecast-chart");
+  if (!window.Chart || !canvas) return;
+  const labels = forecast.expected.labels;
+  const series = FORECAST_LINES.map((line) => forecast[line.key].balances);
+  if (forecastChart) {
+    forecastChart.data.labels = labels;
+    forecastChart.data.datasets.forEach((ds, i) => (ds.data = series[i]));
+    forecastChart.update();
+    return;
+  }
+  forecastChart = new window.Chart(canvas.getContext("2d"), {
+    type: "line",
+    data: {
+      labels,
+      datasets: FORECAST_LINES.map((line, i) => ({
+        label: line.label,
+        data: series[i],
+        borderColor: line.color,
+        backgroundColor: "transparent",
+        borderWidth: line.width,
+        tension: 0.25,
+        pointRadius: 0,
+      })),
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: {
+          display: true,
+          position: "bottom",
+          labels: { boxWidth: 12, usePointStyle: true },
+        },
+        tooltip: {
+          callbacks: {
+            label: (ctx) =>
+              `${ctx.dataset.label}: ${formatMoney(ctx.parsed.y)}`,
+          },
+        },
+      },
+      scales: { y: { ticks: { callback: (v) => formatMoney(v) } } },
+    },
+  });
+}
+
+function setupForecast(profile) {
+  const form = document.getElementById("forecast-form");
+  const monthlyEl = document.getElementById("forecast-monthly");
+  const yearsEl = document.getElementById("forecast-years");
+  const riskEl = document.getElementById("forecast-risk");
+
+  riskEl.value = RISK_RETURN_BANDS[profile.risk]
+    ? profile.risk
+    : FORECAST_DEFAULT_RISK;
+  yearsEl.value = FORECAST_DEFAULT_YEARS;
+  // Default the monthly contribution from the onboarding profile when set.
+  if (typeof profile.monthlyContribution === "number") {
+    monthlyEl.value = profile.monthlyContribution;
+  }
+
+  function recalc() {
+    const startingValue = portfolioCurrentValue;
+    const monthly = Number(monthlyEl.value) || 0;
+    const years = Math.max(1, Number(yearsEl.value) || 1);
+    const forecast = buildForecast({
+      startingValue,
+      monthly,
+      years,
+      risk: riskEl.value,
+    });
+
+    document.getElementById("forecast-start").textContent =
+      formatMoney(startingValue);
+    const hint = document.getElementById("forecast-empty-hint");
+    if (hint) hint.hidden = startingValue > 0;
+
+    document.getElementById("forecast-cons").textContent = formatMoney(
+      forecast.conservative.finalValue,
+    );
+    document.getElementById("forecast-exp").textContent = formatMoney(
+      forecast.expected.finalValue,
+    );
+    document.getElementById("forecast-opt").textContent = formatMoney(
+      forecast.optimistic.finalValue,
+    );
+    document.getElementById("forecast-rate-cons").textContent =
+      `${forecast.band.conservative}%`;
+    document.getElementById("forecast-rate-exp").textContent =
+      `${forecast.band.expected}%`;
+    document.getElementById("forecast-rate-opt").textContent =
+      `${forecast.band.optimistic}%`;
+
+    renderForecastChart(forecast);
+  }
+
+  recalcForecast = recalc;
+  form.addEventListener("input", recalc);
+  recalc();
+  if (!window.Chart) {
+    const tick = () => (window.Chart ? recalc() : setTimeout(tick, 50));
+    tick();
+  }
+}
+
 // --- Country selector + currency-driven UI --------------------------------
 function setupCountry() {
   const sel = document.getElementById("country-select");
@@ -884,6 +1289,7 @@ function updateCurrencyUI() {
     el.textContent = symbol;
   }
   if (recalcCalculator) recalcCalculator();
+  if (recalcForecast) recalcForecast();
 }
 
 // --- Tabs (hash-routed; one <section> per tab) ----------------------------
@@ -898,17 +1304,45 @@ const TABS = [
   { id: "home", label: "Home" },
 ];
 
-// The records-derived default lands properly once Start/Home are built; for now
-// the seeded Portfolio is the most useful first view.
-const DEFAULT_TAB = "portfolio";
+// A brand-new user lands on the Start wizard; once onboarded (matured), Home is
+// the daily-companion landing.
+function defaultTab() {
+  return onboarded ? "home" : "start";
+}
+
+function setStartTabVisible(visible) {
+  const btn = document.querySelector('.tab-btn[data-tab="start"]');
+  if (btn) btn.hidden = !visible;
+}
+
+function showStartTabButton() {
+  setStartTabVisible(true);
+}
+
+function markOnboarded() {
+  onboarded = true;
+  setStartTabVisible(false);
+}
+
+// Routing and Start-button visibility share one source of truth: Start is
+// routable only while its button is shown (not onboarded, or during a re-run),
+// so a stale `#start` hash can't reveal the panel with no active tab.
+function tabIsAvailable(id) {
+  if (!TABS.some((t) => t.id === id)) return false;
+  if (id === "start") {
+    const btn = document.querySelector('.tab-btn[data-tab="start"]');
+    return btn ? !btn.hidden : !onboarded;
+  }
+  return true;
+}
 
 function hashTab() {
   const id = (location.hash || "").replace(/^#/, "");
-  return TABS.some((t) => t.id === id) ? id : null;
+  return tabIsAvailable(id) ? id : null;
 }
 
 function showTab(id) {
-  const target = TABS.some((t) => t.id === id) ? id : DEFAULT_TAB;
+  const target = tabIsAvailable(id) ? id : defaultTab();
   for (const tab of TABS) {
     const panel = document.getElementById(`tab-${tab.id}`);
     if (panel) panel.hidden = tab.id !== target;
@@ -918,6 +1352,11 @@ function showTab(id) {
       btn.setAttribute("aria-selected", String(tab.id === target));
     }
   }
+  // A chart created while its panel was display:none lays out at zero height;
+  // resize it once its tab is actually visible.
+  if (target === "calculator" && calculatorChart) calculatorChart.resize();
+  if (target === "forecast" && forecastChart) forecastChart.resize();
+  if (target === "home") handleHomeOpen();
 }
 
 function setupTabs() {
@@ -935,14 +1374,16 @@ function setupTabs() {
     });
     bar.append(btn);
   }
+  setStartTabVisible(!onboarded);
   window.addEventListener("hashchange", () => showTab(hashTab()));
-  showTab(hashTab() || DEFAULT_TAB);
+  showTab(hashTab() || defaultTab());
 }
 
 async function init() {
   try {
-    setupTabs();
     const profile = await loadProfile();
+    onboarded = isOnboarded(profile);
+    appProfile = profile;
     activeCountry = COUNTRY_CONFIG[profile.country]
       ? profile.country
       : DEFAULT_COUNTRY;
@@ -951,13 +1392,20 @@ async function init() {
 
     setupCountry();
     setupProfile(profile);
+    setupStart(profile);
     renderCalculator();
+    setupForecast(profile);
+    setupHome();
     updateCurrencyUI();
     setupHoldingControls();
     await setupProposals(topPicks);
+    // Load holdings BEFORE the first tab paints so the Home digest (the default
+    // landing once onboarded) shows real figures, not a $0 flash.
     await migrateHoldings();
     await ensureSeeded();
     await refreshHoldings();
+    // Now the initial showTab fires with both setup wired and data loaded.
+    setupTabs();
     await refreshLive();
     setInterval(() => {
       refreshLive().catch(() => {});
