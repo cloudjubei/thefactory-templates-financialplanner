@@ -84,6 +84,10 @@
                 placeholder="e.g. clean energy, tech"
               />
             </label>
+            <div class="field">
+              <span>What are you open to?</span>
+              <div id="start-products" class="product-types"></div>
+            </div>
             <div class="start-actions">
               <button type="submit" id="start-submit">Build my plan</button>
             </div>
@@ -116,6 +120,10 @@
                 maxlength="80"
               />
             </label>
+            <div class="field">
+              <span>Open to</span>
+              <div id="profile-products" class="product-types"></div>
+            </div>
             <button type="submit">Save profile</button>
           </form>
           <p id="profile-status" class="form-status" role="status"></p>
@@ -149,23 +157,22 @@
         </div>
       </section>
 
-      <!-- Portfolio -->
-      <section id="tab-portfolio" class="tab-panel" role="tabpanel" hidden>
-        <section
-          class="card markets"
-          id="markets"
-          hidden
-          aria-labelledby="markets-h"
-        >
+      <!-- Investigations (deep-dives launched from a proposal) -->
+      <section id="tab-investigations" class="tab-panel" role="tabpanel" hidden>
+        <div class="card">
           <div class="card-head">
-            <h2 id="markets-h">Live market</h2>
+            <h2>Investigations</h2>
             <p class="card-sub">
-              Stocks in your selected country, refreshed automatically.
+              Deep-dives you launched from a proposal. They run in the
+              background — this tab notifies you when one is ready.
             </p>
           </div>
-          <div id="markets-body" class="markets-empty"></div>
-        </section>
+          <div id="investigations-body" class="investigations-empty"></div>
+        </div>
+      </section>
 
+      <!-- Portfolio -->
+      <section id="tab-portfolio" class="tab-panel" role="tabpanel" hidden>
         <section class="card holdings" aria-labelledby="holdings-h">
           <div class="card-head">
             <h2 id="holdings-h">Your holdings</h2>
@@ -225,6 +232,15 @@
                   min="0"
                   placeholder="0"
                 />
+              </label>
+              <label class="field">
+                <span>Currency</span>
+                <select name="currency">
+                  <option value="USD">USD ($)</option>
+                  <option value="GBP">GBP (£)</option>
+                  <option value="EUR">EUR (€)</option>
+                  <option value="PLN">PLN (zł)</option>
+                </select>
               </label>
               <label class="field">
                 <span>Amount invested</span>
@@ -288,10 +304,36 @@
               <strong id="holdings-pnl">—</strong>
             </div>
           </div>
+          <p id="portfolio-fx-note" class="form-status" role="status" hidden>
+            Totals mix currencies — subscribe to <strong>FX Rates</strong> in
+            Overseer's Live Data tab for accurate conversion.
+          </p>
         </section>
       </section>
 
-      <!-- Forecast (built in a later step) -->
+      <!-- Market (searchable live prices) -->
+      <section id="tab-market" class="tab-panel" role="tabpanel" hidden>
+        <section class="card markets" aria-labelledby="markets-h">
+          <div class="card-head">
+            <h2 id="markets-h">Market</h2>
+            <p class="card-sub">
+              Live prices for the stocks your project tracks. Search by symbol.
+            </p>
+          </div>
+          <div class="market-search-wrap">
+            <input
+              id="market-search"
+              type="search"
+              placeholder="Search a symbol (e.g. AAPL)"
+              aria-label="Search the market"
+              autocomplete="off"
+            />
+          </div>
+          <div id="markets-body" class="markets-empty"></div>
+        </section>
+      </section>
+
+      <!-- Forecast -->
       <section id="tab-forecast" class="tab-panel" role="tabpanel" hidden>
         <section class="card forecast" aria-labelledby="forecast-h">
           <div class="card-head">
@@ -382,10 +424,20 @@
 
       <!-- News (built in a later step) -->
       <section id="tab-news" class="tab-panel" role="tabpanel" hidden>
-        <div class="card placeholder-card">
-          <h2>News</h2>
-          <p>Daily, curated news on the assets you hold.</p>
-          <p class="placeholder-note">Coming in a later step.</p>
+        <div class="card">
+          <div class="card-head">
+            <h2>News</h2>
+            <p class="card-sub">
+              Recent, curated news on the assets you hold. Refresh a card to
+              pull the latest.
+            </p>
+          </div>
+          <div class="news-actions">
+            <button type="button" id="news-refresh-all">Refresh all</button>
+          </div>
+          <div id="news-body" class="news-empty">
+            <p>No holdings yet — add some in Portfolio to get news on them.</p>
+          </div>
         </div>
       </section>
 

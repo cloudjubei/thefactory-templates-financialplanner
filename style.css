@@ -29,16 +29,26 @@ body {
   overflow-x: hidden;
 }
 
+/* The gradient lives on the root so it always fills the full viewport (no
+   second background showing through on short content or wide screens). */
+html {
+  background: linear-gradient(180deg, #eef2fb 0%, var(--bg) 220px) var(--bg);
+}
+
 body {
   font-family:
     -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
     Arial, sans-serif;
-  background: linear-gradient(180deg, #eef2fb 0%, var(--bg) 220px);
   color: var(--text);
   line-height: 1.45;
   padding: 28px 24px 40px;
   max-width: 1080px;
   margin-inline: auto;
+  /* Full-height flex column so the footer pins to the bottom even when the
+     content is short. */
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ---- Cards --------------------------------------------------------------- */
@@ -281,33 +291,55 @@ body {
 }
 
 .top-picks-list li {
-  display: grid;
-  gap: 4px;
-  padding: 13px 14px;
   border: 1px solid var(--border);
   border-radius: 11px;
   background: var(--bg);
-  transition:
-    border-color 0.12s,
-    transform 0.12s;
+  overflow: hidden;
 }
-
-.top-picks-list li:hover {
-  border-color: var(--accent);
-  transform: translateY(-1px);
+.pick-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 14px;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
 }
-
+.pick-header:hover {
+  background: var(--accent-soft);
+}
 .pick-symbol {
   font-weight: 650;
+  flex: 1;
+  min-width: 0;
 }
-
+.pick-chevron {
+  color: var(--muted);
+  font-size: 12px;
+}
+.pick-details {
+  display: grid;
+  gap: 6px;
+  padding: 0 14px 13px;
+}
+.pick-details[hidden] {
+  display: none;
+}
 .pick-reason {
   color: var(--muted);
   font-size: 14px;
 }
-
+.pick-where {
+  font-size: 13px;
+}
 .pick-actions {
-  margin-top: 6px;
+  margin-top: 4px;
+  display: flex;
+  gap: 8px;
 }
 .pick-buy {
   padding: 5px 12px;
@@ -322,6 +354,172 @@ body {
 }
 .pick-buy:hover {
   border-color: var(--accent);
+}
+
+/* ---- Product-type picker (onboarding + profile) -------------------------- */
+.product-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.checkbox-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 13px;
+  cursor: pointer;
+}
+.checkbox-pill input {
+  margin: 0;
+}
+.checkbox-pill:hover {
+  border-color: var(--accent);
+}
+
+/* ---- Investigate action + Investigations tab ----------------------------- */
+.pick-investigate {
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.pick-investigate:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.pick-header.is-ongoing {
+  cursor: default;
+}
+.investigations-empty {
+  padding: 20px;
+  border: 1px dashed var(--border);
+  border-radius: 11px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.investigation-section {
+  display: grid;
+  gap: 2px;
+}
+.investigation-heading {
+  font-weight: 650;
+  font-size: 13px;
+}
+
+/* ---- News tab ------------------------------------------------------------ */
+.news-empty {
+  padding: 28px 20px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.news-list {
+  display: grid;
+  gap: 14px;
+}
+.news-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+}
+.news-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.news-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.news-asset {
+  font-weight: 650;
+}
+.news-refresh {
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.news-refresh:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.news-updated {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.news-items {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.news-item {
+  display: grid;
+  gap: 3px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.news-item:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+.news-item-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  text-decoration: none;
+}
+a.news-item-title:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.news-summary {
+  margin: 0;
+  font-size: 14px;
+}
+.news-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+.news-sources {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.news-sources-label {
+  color: var(--muted);
+}
+.news-source {
+  color: var(--accent);
+  text-decoration: none;
+}
+.news-source:hover {
+  text-decoration: underline;
 }
 
 /* ---- Holdings ------------------------------------------------------------ */
@@ -438,7 +636,8 @@ body {
 /* ---- Footer -------------------------------------------------------------- */
 
 .page-foot {
-  margin-top: 28px;
+  margin-top: auto;
+  padding-top: 28px;
   text-align: center;
   color: var(--muted);
   font-size: 13px;
@@ -614,6 +813,17 @@ td.row-actions {
 .market-symbol {
   font-weight: 600;
 }
+.market-badge {
+  margin-left: 7px;
+  padding: 1px 5px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  vertical-align: 1px;
+}
 .market-value {
   font-variant-numeric: tabular-nums;
   color: var(--growth);
@@ -622,6 +832,23 @@ td.row-actions {
 .markets-empty {
   color: var(--muted);
   font-size: 14px;
+}
+.market-search-wrap {
+  margin-bottom: 12px;
+}
+#market-search {
+  width: 100%;
+  padding: 9px 12px;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+#market-search:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .live-dot {
   margin-left: 6px;
@@ -682,6 +909,9 @@ td.num.is-live {
 }
 .tab-btn {
   flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 8px 14px;
   border: 0;
   border-radius: 999px;
@@ -691,6 +921,35 @@ td.num.is-live {
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
+}
+/* Per-tab work indicator: spinner while busy, unread-count badge when done. */
+.tab-indicator {
+  display: none;
+}
+.tab-indicator.is-busy {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  opacity: 0.55;
+  animation: planner-spin 0.7s linear infinite;
+}
+.tab-indicator.is-unread {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--negative);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 0 0 2px var(--surface);
 }
 .tab-btn:hover {
   background: var(--accent-soft);
@@ -719,14 +978,6 @@ td.num.is-live {
 .tab-panel[hidden] {
   display: none;
 }
-.placeholder-card {
-  text-align: center;
-}
-.placeholder-note {
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 13px;
-}
 
 /* ---- Profile form + status ----------------------------------------------- */
 .profile-form .field {
@@ -749,7 +1000,8 @@ td.num.is-live {
   font: inherit;
 }
 .profile-form button,
-.proposals-actions button {
+.proposals-actions button,
+.news-actions button {
   padding: 8px 14px;
   border: 0;
   border-radius: 8px;
@@ -759,11 +1011,13 @@ td.num.is-live {
   cursor: pointer;
 }
 .profile-form button:disabled,
-.proposals-actions button:disabled {
+.proposals-actions button:disabled,
+.news-actions button:disabled {
   opacity: 0.6;
   cursor: default;
 }
-.proposals-actions {
+.proposals-actions,
+.news-actions {
   margin-bottom: 8px;
 }
 .form-status {
@@ -771,6 +1025,25 @@ td.num.is-live {
   font-size: 13px;
   color: var(--muted);
   min-height: 1em;
+}
+
+/* ---- Button loading spinner ---------------------------------------------- */
+@keyframes planner-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+button.is-loading::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 8px;
+  vertical-align: -1px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: planner-spin 0.7s linear infinite;
 }
 
 /* ---- Start onboarding ---------------------------------------------------- */

@@ -309,9 +309,37 @@ async function refreshHoldings() {
   renderHomeDigest();
 }
 
-// --- Live data (read-only, via the bridge; filtered to the active country) --
+// --- Live data (read-only, via the bridge) --------------------------------
 const livePrices = new Map();
-let liveMarkets = [];
+// Every subscribed stock-quote record across all markets — the Market tab.
+let allMarkets = [];
+let marketSearch = "";
+
+// FX rates relative to USD (USD→X), from the `fx-rate` live source; `USD` is the
+// implicit base (= 1). The rest fill in when the project is subscribed to FX Rates.
+const FX_CURRENCIES = Object.keys(CURRENCY_SYMBOL);
+let fxRates = { USD: 1 };
+
+function fxRate(currency) {
+  return currency === "USD" ? 1 : fxRates[currency];
+}
+
+// Convert between any two of the app's currencies via the USD base. Returns the
+// amount unchanged when same-currency or a rate is missing (FX not subscribed).
+function convertCurrency(amount, fromCurrency, toCurrency) {
+  if (!fromCurrency || !toCurrency || fromCurrency === toCurrency)
+    return amount;
+  const from = fxRate(fromCurrency);
+  const to = fxRate(toCurrency);
+  if (!from || !to) return amount;
+  return (amount / from) * to;
+}
+
+// Market suffix (us/uk/de/pl) → its country config, for the Market tab labels.
+const MARKET_BY_SUFFIX = {};
+for (const [code, cfg] of Object.entries(COUNTRY_CONFIG)) {
+  MARKET_BY_SUFFIX[cfg.marketSuffix] = { code, ...cfg };
+}
 
 // Stooq quote symbols carry an exchange suffix (VOO.US, VOD.UK); a holding is
 // entered bare (VOO). Strip the known suffix so the two match + display cleanly.
@@ -323,8 +351,9 @@ function normalizeSymbol(symbol) {
 
 async function loadLiveData() {
   livePrices.clear();
-  liveMarkets = [];
-  // Currency follows the chosen country regardless of which markets are subscribed.
+  allMarkets = [];
+  fxRates = { USD: 1 };
+  // The portfolio's display currency follows the chosen country.
   activeCurrency = COUNTRY_CONFIG[activeCountry].currency;
   const bridge = window.OverseerBridge;
   if (!bridge || !bridge.embedded || !bridge.readLiveData) return;
@@ -334,9 +363,19 @@ async function loadLiveData() {
   } catch {
     return;
   }
-  const wantType = `stock-quote-${COUNTRY_CONFIG[activeCountry].marketSuffix}`;
   for (const source of subscribed || []) {
-    if ((source.recordType || "") !== wantType) continue; // only the selected country's market
+    const recordType = source.recordType || "";
+    if (recordType === "fx-rate") {
+      for (const rec of source.records || []) {
+        const c = rec.content || {};
+        for (const cur of FX_CURRENCIES) {
+          if (typeof c[cur] === "number") fxRates[cur] = c[cur];
+        }
+      }
+      continue;
+    }
+    if (!recordType.startsWith("stock-quote-")) continue;
+    const market = MARKET_BY_SUFFIX[recordType.slice("stock-quote-".length)];
     for (const rec of source.records || []) {
       const content = rec.content || {};
       const latest = content.latest;
@@ -345,13 +384,15 @@ async function loadLiveData() {
       const currency =
         typeof content.currency === "string"
           ? content.currency
-          : activeCurrency;
-      liveMarkets.push({
+          : (market && market.currency) || activeCurrency;
+      allMarkets.push({
         key: rec.key,
         value,
         currency,
         t: latest && latest.t,
+        market: market ? market.code : recordType.slice(12).toUpperCase(),
       });
+      // A holding can now be from any market, so match symbols across them all.
       if (value !== undefined && rec.key) {
         livePrices.set(normalizeSymbol(rec.key), {
           v: value,
@@ -364,28 +405,36 @@ async function loadLiveData() {
 }
 
 function renderMarkets() {
-  const card = document.getElementById("markets");
   const body = document.getElementById("markets-body");
+  if (!body) return;
   if (!window.OverseerBridge || !window.OverseerBridge.embedded) {
-    card.hidden = true;
+    body.className = "markets-empty";
+    body.innerHTML = "<p>Open this project in Overseer to see live prices.</p>";
     return;
   }
-  card.hidden = false;
-  body.innerHTML = "";
-  if (liveMarkets.length === 0) {
-    const label = COUNTRY_CONFIG[activeCountry].label;
+  if (allMarkets.length === 0) {
     body.className = "markets-empty";
-    body.innerHTML = `<p>No live market for <strong>${escapeHtml(label)}</strong> — subscribe to its source in Overseer's <strong>Live Data</strong> tab.</p>`;
+    body.innerHTML =
+      "<p>No market data yet — subscribe to a stock source in Overseer's <strong>Live Data</strong> tab.</p>";
+    return;
+  }
+  const term = marketSearch.trim().toUpperCase();
+  const filtered = term
+    ? allMarkets.filter((m) => normalizeSymbol(m.key).includes(term))
+    : allMarkets;
+  if (filtered.length === 0) {
+    body.className = "markets-empty";
+    body.innerHTML = `<p>No match for "${escapeHtml(marketSearch.trim())}".</p>`;
     return;
   }
   body.className = "";
   const list = document.createElement("ul");
   list.className = "markets-list";
-  for (const m of liveMarkets.slice(0, 24)) {
+  for (const m of filtered.slice(0, 60)) {
     const li = document.createElement("li");
     const left = document.createElement("span");
     left.className = "market-symbol";
-    left.textContent = normalizeSymbol(m.key);
+    left.innerHTML = `${escapeHtml(normalizeSymbol(m.key))}<span class="market-badge">${escapeHtml(m.market)}</span>`;
     const right = document.createElement("span");
     right.className = "market-value";
     right.textContent =
@@ -395,6 +444,17 @@ function renderMarkets() {
     list.append(li);
   }
   body.append(list);
+}
+
+function setupMarket() {
+  const input = document.getElementById("market-search");
+  if (input) {
+    input.addEventListener("input", () => {
+      marketSearch = input.value;
+      renderMarkets();
+    });
+  }
+  renderMarkets();
 }
 
 async function refreshLive() {
@@ -412,21 +472,35 @@ let portfolioCurrentValue = 0;
 // Total amount invested across all holdings (the Home digest's delta base).
 let portfolioInvested = 0;
 
-// A holding's current value: live (price × qty) for market assets with a quote,
-// else the manual figure, else fall back to the amount invested (flat).
+// A holding's current value, converted to the display currency: live (price ×
+// qty, in the quote's currency) for market assets with a quote, else the manual
+// figure, else the amount invested (both in the holding's own currency).
 function holdingCurrentValue(h) {
+  const display = activeCurrency;
   if (MARKET_ASSET_CLASSES.has(h.assetClass) && h.symbol) {
     const live = livePrices.get(normalizeSymbol(h.symbol));
     // A non-positive quote means "no useful price", not "worth nothing" — fall
     // through to the manual / invested figure rather than zeroing the holding.
     if (live && live.v > 0 && Number(h.quantity)) {
-      return { value: Number(h.quantity) * live.v, live };
+      const native = Number(h.quantity) * live.v;
+      return { value: convertCurrency(native, live.currency, display), live };
     }
   }
+  const holdCur = h.currency || display;
   if (h.currentValueManual !== undefined && h.currentValueManual !== null) {
-    return { value: Number(h.currentValueManual) || 0, live: null };
+    return {
+      value: convertCurrency(
+        Number(h.currentValueManual) || 0,
+        holdCur,
+        display,
+      ),
+      live: null,
+    };
   }
-  return { value: Number(h.amountInvested) || 0, live: null };
+  return {
+    value: convertCurrency(Number(h.amountInvested) || 0, holdCur, display),
+    live: null,
+  };
 }
 
 function renderHoldings(holdings) {
@@ -438,7 +512,11 @@ function renderHoldings(holdings) {
   for (const h of holdings) {
     const key = holdingKey(h);
     holdingsByKey.set(key, h);
-    const rowInvested = Number(h.amountInvested) || 0;
+    const rowInvested = convertCurrency(
+      Number(h.amountInvested) || 0,
+      h.currency || activeCurrency,
+      activeCurrency,
+    );
     const { value: rowCurrent, live } = holdingCurrentValue(h);
     const rowPnl = rowCurrent - rowInvested;
     invested += rowInvested;
@@ -483,6 +561,17 @@ function renderHoldings(holdings) {
   const pnlEl = document.getElementById("holdings-pnl");
   pnlEl.textContent = `${formatSignedMoney(pnl)} (${pctText})`;
   pnlEl.className = pnl >= 0 ? "pnl-positive" : "pnl-negative";
+
+  // Flag when a holding needs conversion we can't do (FX source not subscribed).
+  const fxNote = document.getElementById("portfolio-fx-note");
+  if (fxNote) {
+    const needsFx = holdings.some(
+      (h) =>
+        (h.currency || activeCurrency) !== activeCurrency &&
+        typeof fxRate(h.currency) !== "number",
+    );
+    fxNote.hidden = !needsFx;
+  }
 }
 
 // --- Add / edit holding form ----------------------------------------------
@@ -492,6 +581,8 @@ function resetHoldingForm() {
   const form = document.getElementById("add-holding");
   form.reset();
   form.currentValueManual.placeholder = "auto";
+  form.currency.value = activeCurrency;
+  syncHoldingFormPrefix();
   editingKey = null;
   document.getElementById("holding-form-title").textContent = "Add a holding";
   document.getElementById("holding-submit").textContent = "Add holding";
@@ -528,6 +619,8 @@ function startEditHolding(key) {
     : "other";
   form.name.value = h.name || "";
   form.symbol.value = h.symbol ? normalizeSymbol(h.symbol) : "";
+  form.currency.value = h.currency || activeCurrency;
+  syncHoldingFormPrefix();
   form.quantity.value = h.quantity ?? "";
   form.amountInvested.value = h.amountInvested ?? "";
   form.currentValueManual.value =
@@ -559,7 +652,7 @@ function readHoldingForm(form) {
     assetClass: String(data.get("assetClass") || "other"),
     name,
     amountInvested: Number(data.get("amountInvested")) || 0,
-    currency: activeCurrency,
+    currency: String(data.get("currency") || activeCurrency),
   };
   if (symbolRaw) holding.symbol = normalizeSymbol(symbolRaw);
   if (qtyRaw) holding.quantity = Number(qtyRaw) || 0;
@@ -570,8 +663,20 @@ function readHoldingForm(form) {
   return holding;
 }
 
+// Keep the add-holding money prefixes on the currency the user picked for the
+// holding (not the display currency).
+function syncHoldingFormPrefix() {
+  const form = document.getElementById("add-holding");
+  if (!form || !form.currency) return;
+  const sym = CURRENCY_SYMBOL[form.currency.value] || form.currency.value;
+  for (const el of form.querySelectorAll(".currency-prefix")) {
+    el.textContent = sym;
+  }
+}
+
 function setupHoldingControls() {
   const form = document.getElementById("add-holding");
+  form.currency.addEventListener("change", syncHoldingFormPrefix);
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const holding = readHoldingForm(form);
@@ -629,43 +734,104 @@ function renderTopPicks(picks) {
   const list = document.createElement("ul");
   list.className = "top-picks-list";
   for (const pick of picks) {
-    const li = document.createElement("li");
-    const sym = document.createElement("div");
-    sym.className = "pick-symbol";
-    const name = pick.name ? ` — ${pick.name}` : "";
-    sym.textContent = `${pick.symbol ?? ""}${name}`;
-    const reason = document.createElement("div");
-    reason.className = "pick-reason";
-    reason.textContent = pick.rationale ?? pick.whyItFits ?? pick.reason ?? "";
-    li.append(sym, reason);
-
-    const actions = document.createElement("div");
-    actions.className = "pick-actions";
-    const buy = document.createElement("button");
-    buy.type = "button";
-    buy.className = "pick-buy";
-    buy.textContent = "I bought this";
-    buy.dataset.name = pick.name || pick.symbol || "";
-    if (pick.symbol) buy.dataset.symbol = pick.symbol;
-    if (pick.assetClass) buy.dataset.assetClass = pick.assetClass;
-    actions.append(buy);
-    li.append(actions);
-
-    list.append(li);
+    list.append(renderPickCard(pick));
   }
   body.append(list);
 }
 
-async function loadLatestOpportunities() {
+// One expandable proposal card: a clickable header (symbol/name + asset badge),
+// and collapsible details (the rationale, where to get it, and actions).
+function renderPickCard(pick) {
+  const li = document.createElement("li");
+  li.className = "pick";
+
+  const header = document.createElement("button");
+  header.type = "button";
+  header.className = "pick-header";
+  header.setAttribute("aria-expanded", "false");
+  const sym = document.createElement("span");
+  sym.className = "pick-symbol";
+  const name = pick.name ? (pick.symbol ? ` — ${pick.name}` : pick.name) : "";
+  sym.textContent = `${pick.symbol ?? ""}${name}`;
+  header.append(sym);
+  if (pick.assetClass) {
+    const badge = document.createElement("span");
+    badge.className = `asset-badge asset-${pick.assetClass}`;
+    badge.textContent =
+      ASSET_CLASS_LABEL.get(pick.assetClass) || pick.assetClass;
+    header.append(badge);
+  }
+  const chevron = document.createElement("span");
+  chevron.className = "pick-chevron";
+  chevron.setAttribute("aria-hidden", "true");
+  chevron.textContent = "▸";
+  header.append(chevron);
+
+  const details = document.createElement("div");
+  details.className = "pick-details";
+  details.hidden = true;
+  const reason = document.createElement("div");
+  reason.className = "pick-reason";
+  reason.textContent = pick.rationale ?? pick.whyItFits ?? pick.reason ?? "";
+  details.append(reason);
+  if (pick.whereAvailable) {
+    const where = document.createElement("div");
+    where.className = "pick-where";
+    where.textContent = `Where: ${pick.whereAvailable}`;
+    details.append(where);
+  }
+  details.append(renderPickActions(pick));
+
+  header.addEventListener("click", () => {
+    const open = details.hidden;
+    details.hidden = !open;
+    header.setAttribute("aria-expanded", String(open));
+    chevron.textContent = open ? "▾" : "▸";
+  });
+
+  li.append(header, details);
+  return li;
+}
+
+function renderPickActions(pick) {
+  const actions = document.createElement("div");
+  actions.className = "pick-actions";
+  const buy = document.createElement("button");
+  buy.type = "button";
+  buy.className = "pick-buy";
+  buy.textContent = "I bought this";
+  buy.dataset.name = pick.name || pick.symbol || "";
+  if (pick.symbol) buy.dataset.symbol = pick.symbol;
+  if (pick.assetClass) buy.dataset.assetClass = pick.assetClass;
+  actions.append(buy);
+  if (window.OverseerBridge && window.OverseerBridge.embedded) {
+    const investigate = document.createElement("button");
+    investigate.type = "button";
+    investigate.className = "pick-investigate";
+    investigate.textContent = "Investigate";
+    investigate.dataset.name = pick.name || pick.symbol || "";
+    if (pick.symbol) investigate.dataset.symbol = pick.symbol;
+    if (pick.assetClass) investigate.dataset.assetClass = pick.assetClass;
+    actions.append(investigate);
+  }
+  return actions;
+}
+
+async function loadLatestOpportunityContent() {
   const bridge = window.OverseerBridge;
   if (!bridge || !bridge.embedded) return null;
   try {
     const recs = await bridge.queryData({ type: "opportunity", key: "latest" });
-    const content = recs && recs[0] && recs[0].content;
-    return content && Array.isArray(content.items) ? content.items : [];
+    return (recs && recs[0] && recs[0].content) || null;
   } catch {
     return null;
   }
+}
+
+async function loadLatestOpportunities() {
+  const content = await loadLatestOpportunityContent();
+  if (content === null) return null;
+  return Array.isArray(content.items) ? content.items : [];
 }
 
 async function setupProposals(staticPicks) {
@@ -676,6 +842,15 @@ async function setupProposals(staticPicks) {
   document
     .getElementById("top-picks-body")
     .addEventListener("click", (event) => {
+      const investigate = event.target.closest(".pick-investigate");
+      if (investigate) {
+        runInvestigation({
+          name: investigate.dataset.name,
+          symbol: investigate.dataset.symbol,
+          assetClass: investigate.dataset.assetClass,
+        });
+        return;
+      }
       const buy = event.target.closest(".pick-buy");
       if (!buy) return;
       prefillHolding({
@@ -709,31 +884,50 @@ async function findProposals() {
   const btn = document.getElementById("find-opportunities");
   const status = document.getElementById("opportunities-status");
   const original = btn ? btn.textContent : "";
+  const before = await loadLatestOpportunityContent();
+  const beforeAt = before && before.generatedAt;
   if (btn) {
     btn.disabled = true;
     btn.textContent = "Finding…";
+    btn.classList.add("is-loading");
   }
   if (status)
     status.textContent =
-      "Searching the web and analysing — this can take a moment…";
+      "Searching the web and analysing — this can take a minute or two…";
+  setTabBusy("proposals", true);
+
+  let runError;
   try {
     await bridge.runJob("opportunities");
-    // The job wrote `opportunity/latest`; re-read it rather than depending on
-    // the generic job route's return shape.
-    const items = (await loadLatestOpportunities()) || [];
+  } catch (err) {
+    runError = err;
+  }
+  // Re-read regardless: the backend writes `opportunity/latest` even if the
+  // bridge call timed out, so a slow-but-completed run still shows its result.
+  const content = await loadLatestOpportunityContent();
+  const produced =
+    content && content.generatedAt && content.generatedAt !== beforeAt;
+
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = original;
+    btn.classList.remove("is-loading");
+  }
+  setTabBusy("proposals", false);
+  if (produced) {
+    const items = Array.isArray(content.items) ? content.items : [];
     renderTopPicks(items);
+    setTabUnread("proposals", items.length);
     if (status)
       status.textContent = items.length
         ? ""
         : "No opportunities found — try adjusting your profile.";
-  } catch (err) {
+  } else if (runError) {
     if (status)
-      status.textContent = `Could not run analysis: ${err && err.message ? err.message : err}`;
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = original;
-    }
+      status.textContent =
+        "That took too long or hit an error — it may still be finishing. Try again in a moment.";
+  } else if (status) {
+    status.textContent = "No opportunities found — try adjusting your profile.";
   }
 }
 
@@ -796,7 +990,11 @@ function renderHomeDigest() {
 
   let mover = null;
   for (const h of holdings) {
-    const inv = Number(h.amountInvested) || 0;
+    const inv = convertCurrency(
+      Number(h.amountInvested) || 0,
+      h.currency || activeCurrency,
+      activeCurrency,
+    );
     if (inv === 0) continue;
     const pct = ((holdingCurrentValue(h).value - inv) / inv) * 100;
     if (!mover || Math.abs(pct) > Math.abs(mover.pct)) mover = { h, pct };
@@ -875,29 +1073,47 @@ async function refreshAdvice() {
   const btn = document.getElementById("refresh-advice");
   const status = document.getElementById("advice-status");
   const original = btn ? btn.textContent : "";
+  const beforeAt = (await loadLatestAdvice())?.generatedAt;
   if (btn) {
     btn.disabled = true;
     btn.textContent = "Thinking…";
+    btn.classList.add("is-loading");
   }
   if (status) status.textContent = "Reviewing your portfolio…";
+  setTabBusy("home", true);
+
+  let runError;
   try {
     const opportunityItems = (await loadLatestOpportunities()) || [];
     await bridge.runJob("advisor", {
       latestOpportunity: { items: opportunityItems },
     });
-    const advice = await loadLatestAdvice();
-    renderAdvice(advice ? advice.items : []);
+  } catch (err) {
+    runError = err;
+  }
+  // Re-read regardless: the backend writes `advice/latest` even if the bridge
+  // call timed out.
+  const advice = await loadLatestAdvice();
+  const produced =
+    advice && advice.generatedAt && advice.generatedAt !== beforeAt;
+
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = original;
+    btn.classList.remove("is-loading");
+  }
+  adviceInFlight = false;
+  setTabBusy("home", false);
+  if (produced) {
+    renderAdvice(advice.items);
+    setTabUnread("home", Array.isArray(advice.items) ? advice.items.length : 0);
     await updateWhatsNew(advice);
     if (status) status.textContent = "";
-  } catch (err) {
-    if (status)
-      status.textContent = `Could not refresh advice: ${err && err.message ? err.message : err}`;
-  } finally {
-    adviceInFlight = false;
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = original;
-    }
+  } else if (runError && status) {
+    status.textContent =
+      "That took too long or hit an error — it may still be finishing. Try again in a moment.";
+  } else if (status) {
+    status.textContent = "";
   }
 }
 
@@ -953,6 +1169,460 @@ function setupHome() {
   renderHomeDigest();
 }
 
+// --- Investigations (per-product deep-dives) ------------------------------
+// Completed investigation records, and the products with a run in flight.
+let investigations = [];
+const ongoingInvestigations = new Map();
+
+function investigationId(product) {
+  const base = String(product.symbol || product.name || "item")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return base || "item";
+}
+
+async function loadInvestigations() {
+  const bridge = window.OverseerBridge;
+  if (!bridge || !bridge.embedded) return [];
+  try {
+    const recs = await bridge.queryData({ type: "investigation" });
+    return (recs || []).map((r) => ({ key: r.key, content: r.content || {} }));
+  } catch {
+    return [];
+  }
+}
+
+async function refreshInvestigations() {
+  investigations = await loadInvestigations();
+  renderInvestigations();
+}
+
+function renderInvestigations() {
+  const body = document.getElementById("investigations-body");
+  if (!body) return;
+  if (!window.OverseerBridge || !window.OverseerBridge.embedded) {
+    body.className = "investigations-empty";
+    body.innerHTML =
+      "<p>Open this project in Overseer to run investigations.</p>";
+    return;
+  }
+  const ongoing = [...ongoingInvestigations.values()];
+  const done = [...investigations]
+    .filter((inv) => !ongoingInvestigations.has(inv.key))
+    .sort((a, b) =>
+      String(b.content.generatedAt || "").localeCompare(
+        String(a.content.generatedAt || ""),
+      ),
+    );
+  if (ongoing.length === 0 && done.length === 0) {
+    body.className = "investigations-empty";
+    body.innerHTML =
+      '<p>No investigations yet — open a proposal and hit "Investigate".</p>';
+    return;
+  }
+  body.className = "";
+  body.innerHTML = "";
+  const list = document.createElement("ul");
+  list.className = "top-picks-list";
+  for (const product of ongoing)
+    list.append(renderOngoingInvestigation(product));
+  for (const inv of done) list.append(renderInvestigationCard(inv));
+  body.append(list);
+}
+
+function renderOngoingInvestigation(product) {
+  const li = document.createElement("li");
+  li.className = "pick";
+  const header = document.createElement("div");
+  header.className = "pick-header is-ongoing";
+  const sym = document.createElement("span");
+  sym.className = "pick-symbol";
+  sym.textContent = `Investigating ${product.name || product.symbol || "…"}`;
+  const spin = document.createElement("span");
+  spin.className = "tab-indicator is-busy";
+  header.append(sym, spin);
+  li.append(header);
+  return li;
+}
+
+function renderInvestigationCard(inv) {
+  const c = inv.content || {};
+  const product = c.product || {};
+  const li = document.createElement("li");
+  li.className = "pick";
+
+  const header = document.createElement("button");
+  header.type = "button";
+  header.className = "pick-header";
+  header.setAttribute("aria-expanded", "false");
+  const sym = document.createElement("span");
+  sym.className = "pick-symbol";
+  sym.textContent = product.name || product.symbol || inv.key;
+  header.append(sym);
+  if (product.assetClass) {
+    const badge = document.createElement("span");
+    badge.className = `asset-badge asset-${product.assetClass}`;
+    badge.textContent =
+      ASSET_CLASS_LABEL.get(product.assetClass) || product.assetClass;
+    header.append(badge);
+  }
+  const chevron = document.createElement("span");
+  chevron.className = "pick-chevron";
+  chevron.setAttribute("aria-hidden", "true");
+  chevron.textContent = "▸";
+  header.append(chevron);
+
+  const details = document.createElement("div");
+  details.className = "pick-details";
+  details.hidden = true;
+  const sections = Array.isArray(c.sections) ? c.sections : [];
+  if (sections.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "pick-reason";
+    empty.textContent = "No analysis was produced — try again.";
+    details.append(empty);
+  }
+  for (const s of sections) {
+    const wrap = document.createElement("div");
+    wrap.className = "investigation-section";
+    const h = document.createElement("div");
+    h.className = "investigation-heading";
+    h.textContent = s.heading || "";
+    const b = document.createElement("div");
+    b.className = "pick-reason";
+    b.textContent = s.body || "";
+    wrap.append(h, b);
+    details.append(wrap);
+  }
+
+  header.addEventListener("click", () => {
+    const open = details.hidden;
+    details.hidden = !open;
+    header.setAttribute("aria-expanded", String(open));
+    chevron.textContent = open ? "▾" : "▸";
+  });
+
+  li.append(header, details);
+  return li;
+}
+
+// Launch a deep-dive on one product. The Investigations tab shows it as ongoing
+// (a tab spinner), then badges when done — so the user can stay on Proposals.
+async function runInvestigation(product) {
+  const bridge = window.OverseerBridge;
+  if (!bridge || !bridge.embedded || !product) return;
+  const id = investigationId(product);
+  if (ongoingInvestigations.has(id)) return;
+  ongoingInvestigations.set(id, product);
+  setTabBusy("investigations", true);
+  renderInvestigations();
+  try {
+    await bridge.runJob("investigate", { product });
+  } catch {
+    // The backend writes the record even if the bridge call timed out; re-read.
+  }
+  ongoingInvestigations.delete(id);
+  await refreshInvestigations();
+  setTabBusy("investigations", ongoingInvestigations.size > 0);
+  if (activeTabId !== "investigations") {
+    setTabUnread("investigations", getTabStatus("investigations").unread + 1);
+  }
+}
+
+function setupInvestigations() {
+  renderInvestigations();
+}
+
+// --- News (per-held-asset recent news) ------------------------------------
+// Completed news records, the assets with a pull in flight, and whether a
+// "Refresh all" sweep is running (keeps the tab spinner steady across it).
+let news = [];
+const ongoingNews = new Map();
+let newsBusyAll = false;
+
+// Keep in lock-step with the backend `newsId` so a record written for an asset
+// is found again here; news is keyed per-company (symbol/name), not per lot.
+function newsId(asset) {
+  const base = String(asset.symbol || asset.name || "item")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return base || "item";
+}
+
+// The distinct assets the user holds, deduped by news id (so two lots of the
+// same instrument share one news card).
+function heldAssets() {
+  const seen = new Map();
+  for (const h of holdingsByKey.values()) {
+    const id = newsId(h);
+    if (!seen.has(id)) {
+      seen.set(id, {
+        name: h.name,
+        symbol: h.symbol,
+        assetClass: h.assetClass,
+      });
+    }
+  }
+  return [...seen.values()];
+}
+
+// Only allow http(s) links through — news urls are LLM-authored, so reject
+// anything that could smuggle a javascript: or data: URL into an href.
+function safeUrl(value) {
+  if (!value) return "";
+  try {
+    const u = new URL(String(value));
+    return u.protocol === "http:" || u.protocol === "https:" ? u.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function formatNewsDate(value) {
+  if (!value) return "";
+  const t = Date.parse(value);
+  if (Number.isNaN(t)) return "";
+  return new Date(t).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+async function loadNews() {
+  const bridge = window.OverseerBridge;
+  if (!bridge || !bridge.embedded) return [];
+  try {
+    const recs = await bridge.queryData({ type: "news" });
+    return (recs || []).map((r) => ({ key: r.key, content: r.content || {} }));
+  } catch {
+    return [];
+  }
+}
+
+async function refreshNews() {
+  news = await loadNews();
+  renderNews();
+}
+
+function updateNewsAllButton() {
+  const btn = document.getElementById("news-refresh-all");
+  if (!btn) return;
+  const embedded = !!(window.OverseerBridge && window.OverseerBridge.embedded);
+  btn.disabled = !embedded || newsBusyAll || heldAssets().length === 0;
+  btn.textContent = newsBusyAll ? "Refreshing…" : "Refresh all";
+  btn.classList.toggle("is-loading", newsBusyAll);
+}
+
+function renderNews() {
+  const body = document.getElementById("news-body");
+  if (!body) return;
+  updateNewsAllButton();
+  if (!window.OverseerBridge || !window.OverseerBridge.embedded) {
+    body.className = "news-empty";
+    body.innerHTML =
+      "<p>Open this project in Overseer to fetch news on your holdings.</p>";
+    return;
+  }
+  const assets = heldAssets();
+  if (assets.length === 0) {
+    body.className = "news-empty";
+    body.innerHTML =
+      "<p>No holdings yet — add some in Portfolio to get news on them.</p>";
+    return;
+  }
+  body.className = "";
+  body.innerHTML = "";
+  const byKey = new Map(news.map((n) => [n.key, n.content || {}]));
+  const list = document.createElement("div");
+  list.className = "news-list";
+  for (const asset of assets) {
+    const id = newsId(asset);
+    list.append(renderNewsCard(asset, byKey.get(id), ongoingNews.has(id)));
+  }
+  body.append(list);
+}
+
+function renderNewsCard(asset, content, ongoing) {
+  const card = document.createElement("section");
+  card.className = "news-card";
+
+  const head = document.createElement("div");
+  head.className = "news-head";
+  const title = document.createElement("div");
+  title.className = "news-title";
+  const name = document.createElement("span");
+  name.className = "news-asset";
+  name.textContent = asset.name || asset.symbol || "Holding";
+  title.append(name);
+  if (asset.symbol) {
+    const sym = document.createElement("span");
+    sym.className = "asset-symbol";
+    sym.textContent = normalizeSymbol(asset.symbol);
+    title.append(sym);
+  }
+  if (asset.assetClass) {
+    const badge = document.createElement("span");
+    badge.className = `asset-badge asset-${asset.assetClass}`;
+    badge.textContent = ASSET_CLASS_LABEL.get(asset.assetClass) || "Other";
+    title.append(badge);
+  }
+  head.append(title);
+  if (ongoing) {
+    const spin = document.createElement("span");
+    spin.className = "tab-indicator is-busy";
+    head.append(spin);
+  } else {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "news-refresh";
+    btn.dataset.id = newsId(asset);
+    btn.textContent = content ? "Refresh" : "Fetch news";
+    head.append(btn);
+  }
+  card.append(head);
+
+  if (content && content.generatedAt) {
+    const when = document.createElement("p");
+    when.className = "news-updated";
+    when.textContent = `Updated ${formatNewsDate(content.generatedAt) || "recently"}`;
+    card.append(when);
+  }
+
+  const items = content && Array.isArray(content.items) ? content.items : [];
+  if (!ongoing && content && items.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "news-meta";
+    empty.textContent = "No recent news found — try again later.";
+    card.append(empty);
+  }
+  if (items.length) {
+    const ul = document.createElement("ul");
+    ul.className = "news-items";
+    for (const item of items) ul.append(renderNewsItem(item));
+    card.append(ul);
+  }
+
+  const sources =
+    content && Array.isArray(content.sources) ? content.sources : [];
+  const sourcesEl = renderNewsSources(sources);
+  if (sourcesEl) card.append(sourcesEl);
+
+  return card;
+}
+
+function renderNewsItem(item) {
+  const li = document.createElement("li");
+  li.className = "news-item";
+  const url = safeUrl(item.url);
+  const titleEl = document.createElement(url ? "a" : "span");
+  titleEl.className = "news-item-title";
+  titleEl.textContent = item.title || "Untitled";
+  if (url) {
+    titleEl.href = url;
+    titleEl.target = "_blank";
+    titleEl.rel = "noopener noreferrer";
+  }
+  li.append(titleEl);
+
+  const meta = [item.source, formatNewsDate(item.publishedAt)].filter(Boolean);
+  if (meta.length) {
+    const metaEl = document.createElement("div");
+    metaEl.className = "news-meta";
+    metaEl.textContent = meta.join(" · ");
+    li.append(metaEl);
+  }
+  if (item.summary) {
+    const sum = document.createElement("p");
+    sum.className = "news-summary";
+    sum.textContent = item.summary;
+    li.append(sum);
+  }
+  return li;
+}
+
+// The verified research sources (real search-result urls), rendered as the
+// provenance footer; returns null when none survive the http(s) filter.
+function renderNewsSources(sources) {
+  const wrap = document.createElement("div");
+  wrap.className = "news-sources";
+  const label = document.createElement("span");
+  label.className = "news-sources-label";
+  label.textContent = "Sources:";
+  wrap.append(label);
+  let count = 0;
+  for (const s of sources) {
+    const url = safeUrl(s && s.url);
+    if (!url) continue;
+    const a = document.createElement("a");
+    a.className = "news-source";
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = (s && s.title) || new URL(url).hostname;
+    wrap.append(a);
+    if (++count >= 6) break;
+  }
+  return count ? wrap : null;
+}
+
+// Pull recent news for one asset. Mirrors runInvestigation: the tab spins while
+// in flight, then badges when done so the user can stay on another tab.
+async function runNewsRefresh(asset) {
+  const bridge = window.OverseerBridge;
+  if (!bridge || !bridge.embedded || !asset) return;
+  const id = newsId(asset);
+  if (ongoingNews.has(id)) return;
+  ongoingNews.set(id, asset);
+  setTabBusy("news", true);
+  renderNews();
+  try {
+    await bridge.runJob("news", { holding: asset });
+  } catch {
+    // The backend writes the record even if the bridge call timed out; re-read.
+  }
+  ongoingNews.delete(id);
+  await refreshNews();
+  setTabBusy("news", ongoingNews.size > 0 || newsBusyAll);
+  if (activeTabId !== "news") {
+    setTabUnread("news", getTabStatus("news").unread + 1);
+  }
+}
+
+// Refresh every held asset in turn (sequential to stay gentle on cost / rate
+// limits); the per-asset cards each have their own on-demand refresh too.
+async function runAllNews() {
+  if (newsBusyAll) return;
+  newsBusyAll = true;
+  updateNewsAllButton();
+  try {
+    for (const asset of heldAssets()) await runNewsRefresh(asset);
+  } finally {
+    newsBusyAll = false;
+    setTabBusy("news", ongoingNews.size > 0);
+    updateNewsAllButton();
+  }
+}
+
+function setupNews() {
+  const body = document.getElementById("news-body");
+  if (body) {
+    body.addEventListener("click", (event) => {
+      const refresh = event.target.closest(".news-refresh");
+      if (!refresh) return;
+      const asset = heldAssets().find((a) => newsId(a) === refresh.dataset.id);
+      if (asset) runNewsRefresh(asset);
+    });
+  }
+  const allBtn = document.getElementById("news-refresh-all");
+  if (allBtn) allBtn.addEventListener("click", runAllNews);
+  renderNews();
+}
+
 // --- Start onboarding -----------------------------------------------------
 // Whether the guided setup has been completed (drives the Start tab's
 // visibility + the default landing tab). Set once the wizard is submitted.
@@ -964,12 +1634,57 @@ function isOnboarded(profile) {
 
 // Push the saved profile back into the Profile + Forecast inputs so they stay
 // consistent after the wizard writes them.
+// Product categories the user is open to — the `value`s must match the backend
+// (opportunityAnalysis.PRODUCT_TYPE_LABELS keys). Empty selection = all.
+const PRODUCT_TYPES = [
+  { value: "stocks", label: "Stocks" },
+  { value: "etfs", label: "ETFs" },
+  { value: "funds", label: "Funds" },
+  { value: "bonds", label: "Bonds" },
+  { value: "crypto", label: "Crypto" },
+  { value: "savings", label: "Savings & cash" },
+];
+
+function renderProductTypes(containerId, selected) {
+  const c = document.getElementById(containerId);
+  if (!c) return;
+  // Default to all when none chosen yet (matches the backend's "empty = all").
+  const set = new Set(
+    Array.isArray(selected) && selected.length
+      ? selected
+      : PRODUCT_TYPES.map((p) => p.value),
+  );
+  c.innerHTML = "";
+  for (const p of PRODUCT_TYPES) {
+    const label = document.createElement("label");
+    label.className = "checkbox-pill";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.value = p.value;
+    cb.checked = set.has(p.value);
+    const span = document.createElement("span");
+    span.textContent = p.label;
+    label.append(cb, span);
+    c.append(label);
+  }
+}
+
+function readProductTypes(containerId) {
+  const c = document.getElementById(containerId);
+  if (!c) return [];
+  return [...c.querySelectorAll("input[type=checkbox]:checked")].map(
+    (cb) => cb.value,
+  );
+}
+
 function applyProfileToForms(profile) {
   const pf = document.getElementById("profile-form");
   if (pf) {
     pf.risk.value = profile.risk || "balanced";
     pf.preferences.value = profile.preferences || "";
   }
+  renderProductTypes("profile-products", profile.productTypes);
+  renderProductTypes("start-products", profile.productTypes);
   const fm = document.getElementById("forecast-monthly");
   if (fm && typeof profile.monthlyContribution === "number") {
     fm.value = profile.monthlyContribution;
@@ -990,6 +1705,7 @@ function fillStartForm(profile) {
       : "";
   form.risk.value = profile.risk || "balanced";
   form.preferences.value = profile.preferences || "";
+  renderProductTypes("start-products", profile.productTypes);
 }
 
 function setupStart(profile) {
@@ -1006,6 +1722,7 @@ function setupStart(profile) {
       monthlyContribution: Number(data.get("monthly")) || 0,
       risk: String(data.get("risk") || "balanced"),
       preferences: String(data.get("preferences") || "").trim(),
+      productTypes: readProductTypes("start-products"),
       onboarded: true,
     });
     markOnboarded();
@@ -1024,12 +1741,14 @@ function setupProfile(profile) {
   const status = document.getElementById("profile-status");
   form.risk.value = profile.risk || "balanced";
   form.preferences.value = profile.preferences || "";
+  renderProductTypes("profile-products", profile.productTypes);
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     await saveProfile({
       risk: form.risk.value,
       preferences: form.preferences.value.trim(),
+      productTypes: readProductTypes("profile-products"),
     });
     if (status) status.textContent = "Saved.";
   });
@@ -1288,20 +2007,24 @@ function updateCurrencyUI() {
   for (const el of document.querySelectorAll(".currency-prefix")) {
     el.textContent = symbol;
   }
+  // The add-holding money fields follow the holding's own currency, not display.
+  syncHoldingFormPrefix();
   if (recalcCalculator) recalcCalculator();
   if (recalcForecast) recalcForecast();
 }
 
 // --- Tabs (hash-routed; one <section> per tab) ----------------------------
 const TABS = [
+  { id: "home", label: "Home" },
   { id: "start", label: "Start" },
   { id: "profile", label: "Profile" },
   { id: "proposals", label: "Proposals" },
+  { id: "investigations", label: "Investigations" },
   { id: "portfolio", label: "Portfolio" },
+  { id: "market", label: "Market" },
   { id: "forecast", label: "Forecast" },
   { id: "news", label: "News" },
   { id: "calculator", label: "Calculator" },
-  { id: "home", label: "Home" },
 ];
 
 // A brand-new user lands on the Start wizard; once onboarded (matured), Home is
@@ -1341,8 +2064,61 @@ function hashTab() {
   return tabIsAvailable(id) ? id : null;
 }
 
+// --- Per-tab work indicators ----------------------------------------------
+// Each tab button shows a spinner while a job for that tab is running, and an
+// unread-count badge once it completes off-tab; opening the tab clears the badge.
+let activeTabId = null;
+const tabStatus = new Map();
+
+function getTabStatus(id) {
+  let s = tabStatus.get(id);
+  if (!s) {
+    s = { busy: false, unread: 0 };
+    tabStatus.set(id, s);
+  }
+  return s;
+}
+
+function renderTabIndicator(id) {
+  const ind = document.querySelector(
+    `.tab-btn[data-tab="${id}"] .tab-indicator`,
+  );
+  if (!ind) return;
+  const s = getTabStatus(id);
+  if (s.busy) {
+    ind.className = "tab-indicator is-busy";
+    ind.textContent = "";
+    ind.title = "Working…";
+  } else if (s.unread > 0) {
+    ind.className = "tab-indicator is-unread";
+    ind.textContent = s.unread > 99 ? "99+" : String(s.unread);
+    ind.title = `${s.unread} new`;
+  } else {
+    ind.className = "tab-indicator";
+    ind.textContent = "";
+    ind.removeAttribute("title");
+  }
+}
+
+function setTabBusy(id, busy) {
+  getTabStatus(id).busy = busy;
+  renderTabIndicator(id);
+}
+
+// Badge a tab with `count` unread items — unless the user is already on it.
+function setTabUnread(id, count) {
+  getTabStatus(id).unread = id === activeTabId ? 0 : count;
+  renderTabIndicator(id);
+}
+
+function clearTabUnread(id) {
+  getTabStatus(id).unread = 0;
+  renderTabIndicator(id);
+}
+
 function showTab(id) {
   const target = tabIsAvailable(id) ? id : defaultTab();
+  activeTabId = target;
   for (const tab of TABS) {
     const panel = document.getElementById(`tab-${tab.id}`);
     if (panel) panel.hidden = tab.id !== target;
@@ -1352,11 +2128,14 @@ function showTab(id) {
       btn.setAttribute("aria-selected", String(tab.id === target));
     }
   }
+  clearTabUnread(target);
   // A chart created while its panel was display:none lays out at zero height;
   // resize it once its tab is actually visible.
   if (target === "calculator" && calculatorChart) calculatorChart.resize();
   if (target === "forecast" && forecastChart) forecastChart.resize();
   if (target === "home") handleHomeOpen();
+  if (target === "investigations") refreshInvestigations();
+  if (target === "news") refreshNews();
 }
 
 function setupTabs() {
@@ -1367,8 +2146,13 @@ function setupTabs() {
     btn.type = "button";
     btn.className = "tab-btn";
     btn.dataset.tab = tab.id;
-    btn.textContent = tab.label;
     btn.setAttribute("role", "tab");
+    const label = document.createElement("span");
+    label.textContent = tab.label;
+    const ind = document.createElement("span");
+    ind.className = "tab-indicator";
+    ind.setAttribute("aria-hidden", "true");
+    btn.append(label, ind);
     btn.addEventListener("click", () => {
       location.hash = tab.id;
     });
@@ -1396,6 +2180,9 @@ async function init() {
     renderCalculator();
     setupForecast(profile);
     setupHome();
+    setupMarket();
+    setupInvestigations();
+    setupNews();
     updateCurrencyUI();
     setupHoldingControls();
     await setupProposals(topPicks);
