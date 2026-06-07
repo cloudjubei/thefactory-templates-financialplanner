@@ -396,6 +396,26 @@ body {
   border-color: var(--accent);
   color: var(--accent);
 }
+.pick-investigate.is-ongoing {
+  color: var(--muted);
+  cursor: default;
+}
+.pick-investigate.is-ongoing::before {
+  content: "";
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  margin-right: 7px;
+  vertical-align: -1px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: planner-spin 0.7s linear infinite;
+}
+.pick-investigate.is-done {
+  color: var(--accent);
+  border-color: var(--accent);
+}
 .pick-header.is-ongoing {
   cursor: default;
 }
@@ -520,6 +540,62 @@ a.news-item-title:hover {
 }
 .news-source:hover {
   text-decoration: underline;
+}
+.news-error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--danger, #dc2626);
+}
+
+/* ---- Portfolio "+" button + add-holding modal --------------------------- */
+.card-head-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.icon-btn {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  cursor: pointer;
+}
+.icon-btn:hover {
+  background: var(--bg);
+  border-color: var(--accent);
+}
+.icon-btn svg {
+  display: block;
+}
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(15, 23, 42, 0.55);
+}
+.modal-overlay[hidden] {
+  display: none;
+}
+.modal-card {
+  width: 100%;
+  max-width: 560px;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.3);
 }
 
 /* ---- Holdings ------------------------------------------------------------ */
@@ -662,14 +738,13 @@ a.news-item-title:hover {
   }
 }
 
-/* ---- Add / edit holdings ------------------------------------------------ */
+/* ---- Add / edit holdings (in a modal) ----------------------------------- */
 .add-holding {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
+  margin: 0;
 }
 .add-holding-title {
   margin: 0 0 12px;
+  font-size: 17px;
   font-weight: 650;
 }
 .add-holding-grid {
@@ -793,21 +868,29 @@ td.row-actions {
 }
 
 /* ---- Live markets + live-price indicators -------------------------------- */
-.markets-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
+.markets-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
 }
-.markets-list li {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 0;
+.markets-table th,
+.markets-table td {
+  padding: 8px 10px;
   border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
 }
-.markets-list li:last-child {
+.markets-table th {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.markets-table th.num,
+.markets-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.markets-table tbody tr:last-child td {
   border-bottom: 0;
 }
 .market-symbol {
@@ -824,20 +907,82 @@ td.row-actions {
   border-radius: 5px;
   vertical-align: 1px;
 }
-.market-value {
-  font-variant-numeric: tabular-nums;
-  color: var(--growth);
-  font-weight: 600;
+.market-trend {
+  width: 80px;
+}
+.sparkline {
+  display: block;
+  width: 72px;
+  height: 22px;
+}
+.sparkline.is-up {
+  color: #16a34a;
+}
+.sparkline.is-down {
+  color: #dc2626;
+}
+.market-info-cell {
+  width: 28px;
+  text-align: right;
+}
+.market-info {
+  width: 22px;
+  height: 22px;
+  font-size: 12px;
+  font-style: italic;
+  font-weight: 700;
+  font-family: Georgia, "Times New Roman", serif;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+  line-height: 1;
+}
+.market-info:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .markets-empty {
   color: var(--muted);
   font-size: 14px;
 }
-.market-search-wrap {
+.asset-info-card {
+  max-width: 460px;
+}
+.asset-info-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 12px;
 }
+.asset-info-head h3 {
+  margin: 0;
+  font-size: 17px;
+}
+.asset-info-summary {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.market-controls {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+#market-country {
+  padding: 9px 12px;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
 #market-search {
-  width: 100%;
+  flex: 1;
+  min-width: 160px;
   padding: 9px 12px;
   font: inherit;
   color: var(--text);

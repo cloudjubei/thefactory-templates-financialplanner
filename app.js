@@ -10,6 +10,12 @@ const COUNTRY_CONFIG = {
 };
 const DEFAULT_COUNTRY = "US";
 const CURRENCY_SYMBOL = { USD: "$", GBP: "£", EUR: "€", PLN: "zł" };
+// Shared phrase used to identify (and later clear) the "tailored for another
+// country" hint that Proposals + Home set on their status lines.
+const STALE_COUNTRY_MARK = "made for a different country";
+function countryLabel(code) {
+  return COUNTRY_CONFIG[code] ? COUNTRY_CONFIG[code].label : code;
+}
 
 let activeCountry = DEFAULT_COUNTRY;
 let activeCurrency = "USD";
@@ -314,6 +320,7 @@ const livePrices = new Map();
 // Every subscribed stock-quote record across all markets — the Market tab.
 let allMarkets = [];
 let marketSearch = "";
+let marketCountry = "";
 
 // FX rates relative to USD (USD→X), from the `fx-rate` live source; `USD` is the
 // implicit base (= 1). The rest fill in when the project is subscribed to FX Rates.
@@ -391,6 +398,7 @@ async function loadLiveData() {
         currency,
         t: latest && latest.t,
         market: market ? market.code : recordType.slice(12).toUpperCase(),
+        history: Array.isArray(content.history) ? content.history : [],
       });
       // A holding can now be from any market, so match symbols across them all.
       if (value !== undefined && rec.key) {
@@ -402,6 +410,55 @@ async function loadLiveData() {
       }
     }
   }
+}
+
+// Percent change of a daily series over the last `days`: latest vs the most
+// recent point at/before the cutoff. null when there isn't enough history.
+function changeOverDays(history, days) {
+  if (!Array.isArray(history) || history.length < 2) return null;
+  const last = history[history.length - 1];
+  const lastT = Date.parse(last.t);
+  if (Number.isNaN(lastT) || !last.v) return null;
+  const cutoff = lastT - days * 86400000;
+  let base = null;
+  for (let i = history.length - 2; i >= 0; i--) {
+    const t = Date.parse(history[i].t);
+    if (!Number.isNaN(t) && t <= cutoff) {
+      base = history[i];
+      break;
+    }
+  }
+  if (!base || !base.v) return null;
+  return ((last.v - base.v) / base.v) * 100;
+}
+
+function pctText(p) {
+  return p === null ? "—" : `${p >= 0 ? "+" : ""}${p.toFixed(1)}%`;
+}
+function pctClass(p) {
+  return p === null ? "" : p >= 0 ? "pnl-positive" : "pnl-negative";
+}
+
+// A tiny inline-SVG trend line from the last ~30 history points.
+function sparklineSvg(history, up) {
+  const pts = (history || [])
+    .slice(-30)
+    .map((p) => p.v)
+    .filter((v) => typeof v === "number");
+  if (pts.length < 2) return "";
+  const min = Math.min(...pts);
+  const max = Math.max(...pts);
+  const range = max - min || 1;
+  const w = 72;
+  const h = 22;
+  const coords = pts
+    .map((v, i) => {
+      const x = (i / (pts.length - 1)) * w;
+      const y = h - ((v - min) / range) * h;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return `<svg class="sparkline ${up ? "is-up" : "is-down"}" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" preserveAspectRatio="none" aria-hidden="true"><polyline points="${coords}" fill="none" stroke="currentColor" stroke-width="1.5" /></svg>`;
 }
 
 function renderMarkets() {
@@ -419,31 +476,57 @@ function renderMarkets() {
     return;
   }
   const term = marketSearch.trim().toUpperCase();
-  const filtered = term
-    ? allMarkets.filter((m) => normalizeSymbol(m.key).includes(term))
-    : allMarkets;
+  const filtered = allMarkets.filter(
+    (m) =>
+      (!marketCountry || m.market === marketCountry) &&
+      (!term || normalizeSymbol(m.key).includes(term)),
+  );
   if (filtered.length === 0) {
     body.className = "markets-empty";
-    body.innerHTML = `<p>No match for "${escapeHtml(marketSearch.trim())}".</p>`;
+    const label = COUNTRY_CONFIG[marketCountry]
+      ? COUNTRY_CONFIG[marketCountry].label
+      : "";
+    body.innerHTML = term
+      ? `<p>No match for "${escapeHtml(marketSearch.trim())}"${label ? ` in ${escapeHtml(label)}` : ""}.</p>`
+      : `<p>No live prices${label ? ` for ${escapeHtml(label)}` : ""} yet.</p>`;
     return;
   }
   body.className = "";
-  const list = document.createElement("ul");
-  list.className = "markets-list";
-  for (const m of filtered.slice(0, 60)) {
-    const li = document.createElement("li");
-    const left = document.createElement("span");
-    left.className = "market-symbol";
-    left.innerHTML = `${escapeHtml(normalizeSymbol(m.key))}<span class="market-badge">${escapeHtml(m.market)}</span>`;
-    const right = document.createElement("span");
-    right.className = "market-value";
-    right.textContent =
-      m.value !== undefined ? formatPrice(m.value, m.currency) : "—";
-    if (m.t) right.title = `as of ${m.t}`;
-    li.append(left, right);
-    list.append(li);
+  body.innerHTML = "";
+  const table = document.createElement("table");
+  table.className = "markets-table";
+  table.innerHTML =
+    '<thead><tr><th>Symbol</th><th class="num">Price</th><th class="num">1d</th><th class="num">7d</th><th class="num">30d</th><th class="trend-col">Trend</th><th aria-label="Info"></th></tr></thead>';
+  const tbody = document.createElement("tbody");
+  for (const m of filtered.slice(0, 80)) {
+    const sym = escapeHtml(normalizeSymbol(m.key));
+    const price =
+      m.value !== undefined
+        ? escapeHtml(formatPrice(m.value, m.currency))
+        : "—";
+    const c1 = changeOverDays(m.history, 1);
+    const c7 = changeOverDays(m.history, 7);
+    const c30 = changeOverDays(m.history, 30);
+    const trendUp = (c30 ?? c7 ?? c1 ?? 0) >= 0;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="market-symbol-cell">
+        <span class="market-symbol">${sym}</span>
+        <span class="market-badge">${escapeHtml(m.market)}</span>
+      </td>
+      <td class="num"${m.t ? ` title="as of ${escapeHtml(String(m.t))}"` : ""}>${price}</td>
+      <td class="num ${pctClass(c1)}">${pctText(c1)}</td>
+      <td class="num ${pctClass(c7)}">${pctText(c7)}</td>
+      <td class="num ${pctClass(c30)}">${pctText(c30)}</td>
+      <td class="market-trend">${sparklineSvg(m.history, trendUp)}</td>
+      <td class="market-info-cell">
+        <button type="button" class="market-info" data-key="${escapeHtml(m.key)}" data-symbol="${sym}" aria-label="About ${sym}">i</button>
+      </td>
+    `;
+    tbody.append(tr);
   }
-  body.append(list);
+  table.append(tbody);
+  body.append(table);
 }
 
 function setupMarket() {
@@ -454,7 +537,123 @@ function setupMarket() {
       renderMarkets();
     });
   }
+  const country = document.getElementById("market-country");
+  if (country) {
+    for (const [code, cfg] of Object.entries(COUNTRY_CONFIG)) {
+      const opt = document.createElement("option");
+      opt.value = code;
+      opt.textContent = cfg.label;
+      country.append(opt);
+    }
+    country.addEventListener("change", () => {
+      marketCountry = country.value;
+      renderMarkets();
+    });
+  }
+  const body = document.getElementById("markets-body");
+  if (body) {
+    body.addEventListener("click", (event) => {
+      const info = event.target.closest(".market-info");
+      if (info) openAssetInfo({ symbol: info.dataset.symbol });
+    });
+  }
+  setupAssetInfoModal();
   renderMarkets();
+}
+
+// --- Asset info ("i" button → a stored short description) -----------------
+const ongoingAssetInfo = new Set();
+
+function assetInfoId(asset) {
+  return (
+    String(asset.symbol || asset.name || "item")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48) || "item"
+  );
+}
+
+async function loadAssetInfo(id) {
+  const bridge = window.OverseerBridge;
+  if (!bridge || !bridge.embedded) return null;
+  try {
+    const recs = await bridge.queryData({ type: "asset-info", key: id });
+    return (recs && recs[0] && recs[0].content) || null;
+  } catch {
+    return null;
+  }
+}
+
+function renderAssetInfo(info) {
+  const bodyEl = document.getElementById("asset-info-body");
+  if (!bodyEl) return;
+  bodyEl.innerHTML = "";
+  if (!info || !info.summary) {
+    const p = document.createElement("p");
+    p.className = "asset-info-summary";
+    p.textContent = "No description found — try again later.";
+    bodyEl.append(p);
+    return;
+  }
+  const summary = document.createElement("p");
+  summary.className = "asset-info-summary";
+  summary.textContent = info.summary;
+  bodyEl.append(summary);
+  const sources = Array.isArray(info.sources) ? info.sources : [];
+  const sourcesEl = renderNewsSources(sources);
+  if (sourcesEl) bodyEl.append(sourcesEl);
+}
+
+async function runAssetInfo(asset) {
+  const bridge = window.OverseerBridge;
+  if (!bridge || !bridge.embedded || !asset) return;
+  const id = assetInfoId(asset);
+  if (ongoingAssetInfo.has(id)) return;
+  ongoingAssetInfo.add(id);
+  try {
+    await bridge.runJob("asset-info", { asset });
+  } catch {
+    // The backend writes the record even if the bridge timed out; re-read.
+  } finally {
+    ongoingAssetInfo.delete(id);
+  }
+}
+
+async function openAssetInfo(asset) {
+  const modal = document.getElementById("asset-info-modal");
+  const titleEl = document.getElementById("asset-info-title");
+  const bodyEl = document.getElementById("asset-info-body");
+  if (!modal || !asset || !asset.symbol) return;
+  titleEl.textContent = asset.name || asset.symbol;
+  modal.hidden = false;
+  const id = assetInfoId(asset);
+  let info = await loadAssetInfo(id);
+  if (info && info.summary) {
+    renderAssetInfo(info);
+    return;
+  }
+  bodyEl.innerHTML =
+    '<p class="asset-info-summary">Looking it up… this can take up to a minute.</p>';
+  await runAssetInfo(asset);
+  info = await loadAssetInfo(id);
+  renderAssetInfo(info);
+}
+
+function setupAssetInfoModal() {
+  const modal = document.getElementById("asset-info-modal");
+  if (!modal) return;
+  const close = () => {
+    modal.hidden = true;
+  };
+  const closeBtn = document.getElementById("asset-info-close");
+  if (closeBtn) closeBtn.addEventListener("click", close);
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal) close();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !modal.hidden) close();
+  });
 }
 
 async function refreshLive() {
@@ -472,34 +671,67 @@ let portfolioCurrentValue = 0;
 // Total amount invested across all holdings (the Home digest's delta base).
 let portfolioInvested = 0;
 
-// A holding's current value, converted to the display currency: live (price ×
-// qty, in the quote's currency) for market assets with a quote, else the manual
-// figure, else the amount invested (both in the holding's own currency).
-function holdingCurrentValue(h) {
+// Whether `fromCur` can be expressed in `toCur` right now: same currency, or both
+// FX rates are loaded (USD is the base and always has one; others need the FX
+// Rates source subscribed).
+function canConvert(fromCur, toCur) {
+  if (!fromCur || fromCur === toCur) return true;
+  return (
+    typeof fxRate(fromCur) === "number" && typeof fxRate(toCur) === "number"
+  );
+}
+
+// Express a native amount in the display currency when the FX rate is available,
+// else keep it in its own currency and leave it unconverted. `approx` marks a
+// converted (FX-rate) figure so the UI can flag it.
+function toDisplayMoney(amount, fromCur) {
   const display = activeCurrency;
+  const cur = fromCur || display;
+  if (canConvert(cur, display)) {
+    return {
+      amount: convertCurrency(amount, cur, display),
+      currency: display,
+      approx: cur !== display,
+    };
+  }
+  return { amount, currency: cur, approx: false };
+}
+
+// A holding's current value in its NATIVE currency: live (price × qty, in the
+// quote's currency) for market assets with a quote, else the manual figure, else
+// the amount invested (both in the holding's own currency). A non-positive quote
+// means "no useful price", so it falls through rather than zeroing the holding.
+function holdingNativeCurrent(h) {
+  const cur = h.currency || activeCurrency;
   if (MARKET_ASSET_CLASSES.has(h.assetClass) && h.symbol) {
     const live = livePrices.get(normalizeSymbol(h.symbol));
-    // A non-positive quote means "no useful price", not "worth nothing" — fall
-    // through to the manual / invested figure rather than zeroing the holding.
     if (live && live.v > 0 && Number(h.quantity)) {
-      const native = Number(h.quantity) * live.v;
-      return { value: convertCurrency(native, live.currency, display), live };
+      return {
+        amount: Number(h.quantity) * live.v,
+        currency: live.currency || cur,
+        live,
+      };
     }
   }
-  const holdCur = h.currency || display;
   if (h.currentValueManual !== undefined && h.currentValueManual !== null) {
     return {
-      value: convertCurrency(
-        Number(h.currentValueManual) || 0,
-        holdCur,
-        display,
-      ),
+      amount: Number(h.currentValueManual) || 0,
+      currency: cur,
       live: null,
     };
   }
+  return { amount: Number(h.amountInvested) || 0, currency: cur, live: null };
+}
+
+// Current value in the display currency (or native + a flag when FX is missing).
+function holdingCurrentValue(h) {
+  const native = holdingNativeCurrent(h);
+  const d = toDisplayMoney(native.amount, native.currency);
   return {
-    value: convertCurrency(Number(h.amountInvested) || 0, holdCur, display),
-    live: null,
+    value: d.amount,
+    currency: d.currency,
+    approx: d.approx,
+    live: native.live,
   };
 }
 
@@ -507,20 +739,33 @@ function renderHoldings(holdings) {
   const tbody = document.getElementById("holdings-body");
   tbody.innerHTML = "";
   holdingsByKey = new Map();
-  let invested = 0;
-  let current = 0;
+  let invSum = 0;
+  let curSum = 0;
+  let anyApprox = false;
+  let unconverted = 0;
   for (const h of holdings) {
     const key = holdingKey(h);
     holdingsByKey.set(key, h);
-    const rowInvested = convertCurrency(
+    const invD = toDisplayMoney(
       Number(h.amountInvested) || 0,
       h.currency || activeCurrency,
-      activeCurrency,
     );
-    const { value: rowCurrent, live } = holdingCurrentValue(h);
-    const rowPnl = rowCurrent - rowInvested;
-    invested += rowInvested;
-    current += rowCurrent;
+    const native = holdingNativeCurrent(h);
+    const curD = toDisplayMoney(native.amount, native.currency);
+    const live = native.live;
+    // P&L only makes sense when invested + current resolve to the same currency.
+    const rowPnl =
+      invD.currency === curD.currency ? curD.amount - invD.amount : null;
+
+    // A row contributes to the totals only when both legs are in the display
+    // currency — otherwise summing it would mix currencies and mislead.
+    if (invD.currency === activeCurrency && curD.currency === activeCurrency) {
+      invSum += invD.amount;
+      curSum += curD.amount;
+      if (invD.approx || curD.approx) anyApprox = true;
+    } else {
+      unconverted++;
+    }
 
     const badge = `<span class="asset-badge asset-${escapeHtml(h.assetClass || "other")}">${escapeHtml(ASSET_CLASS_LABEL.get(h.assetClass) || "Other")}</span>`;
     const symbolBit = h.symbol
@@ -532,6 +777,14 @@ function renderHoldings(holdings) {
     const liveTag = live
       ? `<span class="live-dot" title="Live ${escapeHtml(formatPrice(live.v, live.currency))}/share${live.t ? " @ " + escapeHtml(live.t) : ""}">● live</span>`
       : "";
+    const investedText = `${invD.approx ? "≈ " : ""}${formatMoney(invD.amount, invD.currency)}`;
+    const currentText = `${curD.approx ? "≈ " : ""}${formatMoney(curD.amount, curD.currency)}`;
+    const pnlText =
+      rowPnl === null
+        ? "—"
+        : `${invD.approx || curD.approx ? "≈ " : ""}${formatSignedMoney(rowPnl, curD.currency)}`;
+    const pnlClass =
+      rowPnl === null ? "" : rowPnl >= 0 ? "pnl-positive" : "pnl-negative";
 
     const tr = document.createElement("tr");
     tr.innerHTML = `
@@ -540,9 +793,9 @@ function renderHoldings(holdings) {
         <span class="asset-meta">${badge}${symbolBit}${accountBit}${liveTag}</span>
       </td>
       <td class="num">${h.quantity ? escapeHtml(String(h.quantity)) : "—"}</td>
-      <td class="num">${formatMoney(rowInvested)}</td>
-      <td class="num${live ? " is-live" : ""}">${formatMoney(rowCurrent)}</td>
-      <td class="num ${rowPnl >= 0 ? "pnl-positive" : "pnl-negative"}">${formatSignedMoney(rowPnl)}</td>
+      <td class="num">${investedText}</td>
+      <td class="num${live ? " is-live" : ""}">${currentText}</td>
+      <td class="num ${pnlClass}">${pnlText}</td>
       <td class="row-actions">
         <button type="button" class="edit-holding" data-key="${escapeHtml(key)}" aria-label="Edit ${escapeHtml(h.name)}">Edit</button>
         <button type="button" class="remove-holding" data-key="${escapeHtml(key)}" aria-label="Remove ${escapeHtml(h.name)}">×</button>
@@ -550,32 +803,48 @@ function renderHoldings(holdings) {
     `;
     tbody.append(tr);
   }
-  portfolioCurrentValue = current;
-  portfolioInvested = invested;
-  const pnl = current - invested;
+  portfolioCurrentValue = curSum;
+  portfolioInvested = invSum;
+  const pnl = curSum - invSum;
   // No invested base → a percentage is undefined; show "—" rather than a
   // misleading "+0.0%" next to a real money gain.
-  const pctText = invested === 0 ? "—" : formatPct((pnl / invested) * 100);
-  document.getElementById("holdings-total").textContent = formatMoney(current);
-  document.getElementById("holdings-cost").textContent = formatMoney(invested);
+  const pctText = invSum === 0 ? "—" : formatPct((pnl / invSum) * 100);
+  const approx = anyApprox ? "≈ " : "";
+  document.getElementById("holdings-total").textContent =
+    approx + formatMoney(curSum);
+  document.getElementById("holdings-cost").textContent =
+    approx + formatMoney(invSum);
   const pnlEl = document.getElementById("holdings-pnl");
-  pnlEl.textContent = `${formatSignedMoney(pnl)} (${pctText})`;
+  pnlEl.textContent = `${approx}${formatSignedMoney(pnl)} (${pctText})`;
   pnlEl.className = pnl >= 0 ? "pnl-positive" : "pnl-negative";
 
-  // Flag when a holding needs conversion we can't do (FX source not subscribed).
   const fxNote = document.getElementById("portfolio-fx-note");
   if (fxNote) {
-    const needsFx = holdings.some(
-      (h) =>
-        (h.currency || activeCurrency) !== activeCurrency &&
-        typeof fxRate(h.currency) !== "number",
-    );
-    fxNote.hidden = !needsFx;
+    if (unconverted > 0) {
+      fxNote.innerHTML = `${unconverted} holding${unconverted > 1 ? "s" : ""} shown in ${unconverted > 1 ? "their" : "its"} own currency and excluded from the totals — subscribe to <strong>FX Rates</strong> in Overseer's Live Data tab to convert.`;
+      fxNote.hidden = false;
+    } else if (anyApprox) {
+      fxNote.textContent =
+        "Totals are approximate — converted from other currencies at the latest daily FX rates.";
+      fxNote.hidden = false;
+    } else {
+      fxNote.hidden = true;
+    }
   }
 }
 
-// --- Add / edit holding form ----------------------------------------------
+// --- Add / edit holding form (in a modal) ---------------------------------
 let editingKey = null;
+
+function openHoldingModal() {
+  const modal = document.getElementById("holding-modal");
+  if (modal) modal.hidden = false;
+}
+
+function closeHoldingModal() {
+  const modal = document.getElementById("holding-modal");
+  if (modal) modal.hidden = true;
+}
 
 function resetHoldingForm() {
   const form = document.getElementById("add-holding");
@@ -586,7 +855,6 @@ function resetHoldingForm() {
   editingKey = null;
   document.getElementById("holding-form-title").textContent = "Add a holding";
   document.getElementById("holding-submit").textContent = "Add holding";
-  document.getElementById("holding-cancel").hidden = true;
 }
 
 // Prefill the form (from a proposal's "I bought this") without entering edit
@@ -602,12 +870,12 @@ function prefillHolding(seed) {
       : "other";
   form.name.value = seed.name || "";
   form.symbol.value = seed.symbol ? normalizeSymbol(seed.symbol) : "";
-  // Reveal the Portfolio panel synchronously — `hashchange` (which drives
-  // showTab) fires async, so focus/scroll would otherwise hit a hidden element.
+  // The modal lives inside the Portfolio panel, so reveal that tab first (its
+  // `hashchange` is async, so call showTab synchronously too).
   location.hash = "portfolio";
   showTab("portfolio");
+  openHoldingModal();
   form.amountInvested.focus();
-  form.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 function startEditHolding(key) {
@@ -626,18 +894,18 @@ function startEditHolding(key) {
   form.currentValueManual.value =
     typeof h.currentValueManual === "number" ? h.currentValueManual : "";
   // When a live quote is driving this row's value, a manual figure would be
-  // ignored — show the live value as the placeholder so that's clear.
-  const { live, value } = holdingCurrentValue(h);
-  form.currentValueManual.placeholder = live
-    ? `${formatMoney(value)} (live)`
+  // ignored — show the live value as the placeholder so that's clear. Use the
+  // native figure so it matches the form's holding-currency prefix.
+  const native = holdingNativeCurrent(h);
+  form.currentValueManual.placeholder = native.live
+    ? `${formatMoney(native.amount, native.currency)} (live)`
     : "auto";
   form.account.value = h.account || "";
   form.purchaseDate.value = h.purchaseDate || "";
   editingKey = key;
   document.getElementById("holding-form-title").textContent = "Edit holding";
   document.getElementById("holding-submit").textContent = "Save changes";
-  document.getElementById("holding-cancel").hidden = false;
-  form.scrollIntoView({ behavior: "smooth", block: "center" });
+  openHoldingModal();
 }
 
 function readHoldingForm(form) {
@@ -695,12 +963,40 @@ function setupHoldingControls() {
       );
     }
     resetHoldingForm();
+    closeHoldingModal();
     await refreshHoldings();
   });
 
-  document
-    .getElementById("holding-cancel")
-    .addEventListener("click", resetHoldingForm);
+  const openBtn = document.getElementById("add-holding-open");
+  if (openBtn) {
+    openBtn.addEventListener("click", () => {
+      resetHoldingForm();
+      openHoldingModal();
+      form.name.focus();
+    });
+  }
+
+  document.getElementById("holding-cancel").addEventListener("click", () => {
+    resetHoldingForm();
+    closeHoldingModal();
+  });
+
+  const modal = document.getElementById("holding-modal");
+  if (modal) {
+    // Backdrop click (the overlay itself, not the card) closes the modal.
+    modal.addEventListener("click", (event) => {
+      if (event.target === modal) {
+        resetHoldingForm();
+        closeHoldingModal();
+      }
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !modal.hidden) {
+        resetHoldingForm();
+        closeHoldingModal();
+      }
+    });
+  }
 
   document
     .getElementById("holdings-body")
@@ -719,6 +1015,38 @@ function setupHoldingControls() {
 }
 
 // --- Proposals (the opportunity analysis job, via the bridge) -------------
+// Map a (real, propagated) analysis error into a short user-facing line, falling
+// back to the raw message so an unexpected failure is still legible.
+function analysisErrorText(err) {
+  const msg = err && err.message ? String(err.message) : "";
+  if (/bridge timeout/i.test(msg))
+    return "Still working in the background — results will appear shortly.";
+  if (/no web search providers/i.test(msg))
+    return "No web-search provider is configured — add one in Overseer settings.";
+  if (/\b429\b|rate.?limit/i.test(msg))
+    return "The web-search provider is rate-limited — try again in a minute.";
+  return (
+    msg || "That hit an error — it may still be finishing. Try again shortly."
+  );
+}
+
+// The static picks shown when no live proposals exist yet (set in setupProposals).
+let proposalsStaticPicks = [];
+
+async function refreshProposalsFromStore() {
+  const content = await loadLatestOpportunityContent();
+  const items = content && Array.isArray(content.items) ? content.items : [];
+  renderTopPicks(items.length ? items : proposalsStaticPicks);
+  const status = document.getElementById("opportunities-status");
+  if (!status) return;
+  if (content && content.country && content.country !== activeCountry) {
+    status.textContent = `These proposals were ${STALE_COUNTRY_MARK} — "Find opportunities" again to tailor them to ${countryLabel(activeCountry)}.`;
+  } else if (status.textContent.includes(STALE_COUNTRY_MARK)) {
+    // Clear only our own stale note, never a findProposals empty/error message.
+    status.textContent = "";
+  }
+}
+
 function renderTopPicks(picks) {
   const body = document.getElementById("top-picks-body");
   body.innerHTML = "";
@@ -808,10 +1136,10 @@ function renderPickActions(pick) {
     const investigate = document.createElement("button");
     investigate.type = "button";
     investigate.className = "pick-investigate";
-    investigate.textContent = "Investigate";
     investigate.dataset.name = pick.name || pick.symbol || "";
     if (pick.symbol) investigate.dataset.symbol = pick.symbol;
     if (pick.assetClass) investigate.dataset.assetClass = pick.assetClass;
+    applyInvestigateButtonState(investigate);
     actions.append(investigate);
   }
   return actions;
@@ -835,6 +1163,7 @@ async function loadLatestOpportunities() {
 }
 
 async function setupProposals(staticPicks) {
+  proposalsStaticPicks = staticPicks || [];
   const bridge = window.OverseerBridge;
   const btn = document.getElementById("find-opportunities");
   const status = document.getElementById("opportunities-status");
@@ -844,11 +1173,15 @@ async function setupProposals(staticPicks) {
     .addEventListener("click", (event) => {
       const investigate = event.target.closest(".pick-investigate");
       if (investigate) {
-        runInvestigation({
-          name: investigate.dataset.name,
-          symbol: investigate.dataset.symbol,
-          assetClass: investigate.dataset.assetClass,
-        });
+        if (investigate.classList.contains("is-done")) {
+          location.hash = "investigations";
+        } else if (!investigate.classList.contains("is-ongoing")) {
+          runInvestigation({
+            name: investigate.dataset.name,
+            symbol: investigate.dataset.symbol,
+            assetClass: investigate.dataset.assetClass,
+          });
+        }
         return;
       }
       const buy = event.target.closest(".pick-buy");
@@ -923,11 +1256,9 @@ async function findProposals() {
         ? ""
         : "No opportunities found — try adjusting your profile.";
   } else if (runError) {
-    if (status)
-      status.textContent =
-        "That took too long or hit an error — it may still be finishing. Try again in a moment.";
+    if (status) status.textContent = analysisErrorText(runError);
   } else if (status) {
-    status.textContent = "No opportunities found — try adjusting your profile.";
+    status.textContent = "Couldn't get opportunities just now — try again.";
   }
 }
 
@@ -990,13 +1321,15 @@ function renderHomeDigest() {
 
   let mover = null;
   for (const h of holdings) {
-    const inv = convertCurrency(
+    const invD = toDisplayMoney(
       Number(h.amountInvested) || 0,
       h.currency || activeCurrency,
-      activeCurrency,
     );
-    if (inv === 0) continue;
-    const pct = ((holdingCurrentValue(h).value - inv) / inv) * 100;
+    const native = holdingNativeCurrent(h);
+    const curD = toDisplayMoney(native.amount, native.currency);
+    // Skip holdings we can't compare in one currency, or with no invested base.
+    if (invD.currency !== curD.currency || invD.amount === 0) continue;
+    const pct = ((curD.amount - invD.amount) / invD.amount) * 100;
     if (!mover || Math.abs(pct) > Math.abs(mover.pct)) mover = { h, pct };
   }
 
@@ -1108,12 +1441,17 @@ async function refreshAdvice() {
     renderAdvice(advice.items);
     setTabUnread("home", Array.isArray(advice.items) ? advice.items.length : 0);
     await updateWhatsNew(advice);
-    if (status) status.textContent = "";
-  } else if (runError && status) {
-    status.textContent =
-      "That took too long or hit an error — it may still be finishing. Try again in a moment.";
-  } else if (status) {
-    status.textContent = "";
+    if (status)
+      status.textContent =
+        Array.isArray(advice.items) && advice.items.length
+          ? ""
+          : "No new advice right now.";
+  } else if (runError) {
+    renderAdvice(advice ? advice.items : []);
+    if (status) status.textContent = analysisErrorText(runError);
+  } else {
+    renderAdvice(advice ? advice.items : []);
+    if (status) status.textContent = "Couldn't refresh advice — try again.";
   }
 }
 
@@ -1152,6 +1490,15 @@ async function handleHomeOpen() {
   renderAdvice(advice ? advice.items : []);
   await updateWhatsNew(advice);
 
+  const status = document.getElementById("advice-status");
+  if (status) {
+    if (advice && advice.country && advice.country !== activeCountry) {
+      status.textContent = `This advice was ${STALE_COUNTRY_MARK} — "Refresh advice" to tailor it to ${countryLabel(activeCountry)}.`;
+    } else if (status.textContent.includes(STALE_COUNTRY_MARK)) {
+      status.textContent = "";
+    }
+  }
+
   if (!mayAutoRun) return;
   const at = advice && advice.generatedAt ? Date.parse(advice.generatedAt) : 0;
   if (!at || Date.now() - at > ADVICE_STALE_MS) refreshAdvice();
@@ -1183,6 +1530,39 @@ function investigationId(product) {
   return base || "item";
 }
 
+// State of a product's investigation, for the proposal card's Investigate button.
+function investigationState(product) {
+  const id = investigationId(product);
+  if (ongoingInvestigations.has(id)) return "ongoing";
+  if (investigations.some((inv) => inv.key === id)) return "done";
+  return "idle";
+}
+
+function applyInvestigateButtonState(btn) {
+  const state = investigationState({
+    name: btn.dataset.name,
+    symbol: btn.dataset.symbol,
+    assetClass: btn.dataset.assetClass,
+  });
+  btn.classList.toggle("is-ongoing", state === "ongoing");
+  btn.classList.toggle("is-done", state === "done");
+  btn.disabled = state === "ongoing";
+  btn.textContent =
+    state === "ongoing"
+      ? "Investigating…"
+      : state === "done"
+        ? "View investigation →"
+        : "Investigate";
+}
+
+// Re-sync every visible Investigate button to the current investigation state
+// (in place, so an expanded proposal card stays open).
+function updateInvestigateButtons() {
+  for (const btn of document.querySelectorAll(".pick-investigate")) {
+    applyInvestigateButtonState(btn);
+  }
+}
+
 async function loadInvestigations() {
   const bridge = window.OverseerBridge;
   if (!bridge || !bridge.embedded) return [];
@@ -1197,6 +1577,7 @@ async function loadInvestigations() {
 async function refreshInvestigations() {
   investigations = await loadInvestigations();
   renderInvestigations();
+  updateInvestigateButtons();
 }
 
 function renderInvestigations() {
@@ -1318,6 +1699,7 @@ async function runInvestigation(product) {
   ongoingInvestigations.set(id, product);
   setTabBusy("investigations", true);
   renderInvestigations();
+  updateInvestigateButtons();
   try {
     await bridge.runJob("investigate", { product });
   } catch {
@@ -1332,7 +1714,9 @@ async function runInvestigation(product) {
 }
 
 function setupInvestigations() {
-  renderInvestigations();
+  // Load existing investigations up front so proposal cards show a "done" /
+  // "View investigation" state without waiting for the tab to be opened.
+  refreshInvestigations();
 }
 
 // --- News (per-held-asset recent news) ------------------------------------
@@ -1340,7 +1724,13 @@ function setupInvestigations() {
 // "Refresh all" sweep is running (keeps the tab spinner steady across it).
 let news = [];
 const ongoingNews = new Map();
+const newsErrors = new Map();
 let newsBusyAll = false;
+
+function newsGeneratedAt(id) {
+  const rec = news.find((n) => n.key === id);
+  return rec && rec.content ? rec.content.generatedAt : undefined;
+}
 
 // Keep in lock-step with the backend `newsId` so a record written for an asset
 // is found again here; news is keyed per-company (symbol/name), not per lot.
@@ -1493,8 +1883,14 @@ function renderNewsCard(asset, content, ongoing) {
     card.append(when);
   }
 
+  const error = newsErrors.get(newsId(asset));
   const items = content && Array.isArray(content.items) ? content.items : [];
-  if (!ongoing && content && items.length === 0) {
+  if (!ongoing && error) {
+    const e = document.createElement("p");
+    e.className = "news-error";
+    e.textContent = error;
+    card.append(e);
+  } else if (!ongoing && content && items.length === 0) {
     const empty = document.createElement("p");
     empty.className = "news-meta";
     empty.textContent = "No recent news found — try again later.";
@@ -1577,16 +1973,27 @@ async function runNewsRefresh(asset) {
   if (!bridge || !bridge.embedded || !asset) return;
   const id = newsId(asset);
   if (ongoingNews.has(id)) return;
+  const beforeAt = newsGeneratedAt(id);
   ongoingNews.set(id, asset);
+  newsErrors.delete(id);
   setTabBusy("news", true);
   renderNews();
+  let runError;
   try {
     await bridge.runJob("news", { holding: asset });
-  } catch {
-    // The backend writes the record even if the bridge call timed out; re-read.
+  } catch (err) {
+    runError = err;
   }
   ongoingNews.delete(id);
+  // Re-read regardless: the backend writes the record even if the bridge timed
+  // out. A failure with no fresh record is a real error, not "no news".
   await refreshNews();
+  if (runError && newsGeneratedAt(id) === beforeAt) {
+    newsErrors.set(id, analysisErrorText(runError));
+  } else {
+    newsErrors.delete(id);
+  }
+  renderNews();
   setTabBusy("news", ongoingNews.size > 0 || newsBusyAll);
   if (activeTabId !== "news") {
     setTabUnread("news", getTabStatus("news").unread + 1);
@@ -1999,6 +2406,8 @@ function setupCountry() {
     await saveProfile({ country: activeCountry });
     updateCurrencyUI();
     await refreshLive();
+    // Surface the "tailored for another country — refresh" hint on Proposals.
+    await refreshProposalsFromStore();
   });
 }
 
@@ -2134,6 +2543,7 @@ function showTab(id) {
   if (target === "calculator" && calculatorChart) calculatorChart.resize();
   if (target === "forecast" && forecastChart) forecastChart.resize();
   if (target === "home") handleHomeOpen();
+  if (target === "proposals") refreshProposalsFromStore();
   if (target === "investigations") refreshInvestigations();
   if (target === "news") refreshNews();
 }

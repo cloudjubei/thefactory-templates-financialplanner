@@ -174,10 +174,65 @@
       <!-- Portfolio -->
       <section id="tab-portfolio" class="tab-panel" role="tabpanel" hidden>
         <section class="card holdings" aria-labelledby="holdings-h">
-          <div class="card-head">
-            <h2 id="holdings-h">Your holdings</h2>
-            <p class="card-sub">A snapshot of what you currently own.</p>
+          <div class="card-head card-head-row">
+            <div>
+              <h2 id="holdings-h">Your holdings</h2>
+              <p class="card-sub">A snapshot of what you currently own.</p>
+            </div>
+            <button
+              type="button"
+              id="add-holding-open"
+              class="icon-btn"
+              aria-label="Add a holding"
+              title="Add a holding"
+            >
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke-linecap="round"
+                aria-hidden="true"
+              >
+                <line
+                  x1="12"
+                  y1="5"
+                  x2="12"
+                  y2="19"
+                  stroke="#3b82f6"
+                  stroke-width="2"
+                ></line>
+                <line
+                  x1="5"
+                  y1="12"
+                  x2="19"
+                  y2="12"
+                  stroke="#10b981"
+                  stroke-width="2"
+                ></line>
+              </svg>
+            </button>
           </div>
+          <div class="holdings-totals">
+            <div class="total-cell">
+              <span class="total-label">Total value</span>
+              <strong id="holdings-total">—</strong>
+            </div>
+            <div class="total-cell">
+              <span class="total-label">Total cost</span>
+              <strong id="holdings-cost">—</strong>
+            </div>
+            <div class="total-cell">
+              <span class="total-label">Total P&amp;L</span>
+              <strong id="holdings-pnl">—</strong>
+            </div>
+          </div>
+          <p
+            id="portfolio-fx-note"
+            class="form-status"
+            role="status"
+            hidden
+          ></p>
           <div class="table-wrap">
             <table id="holdings-table">
               <thead>
@@ -193,122 +248,108 @@
               <tbody id="holdings-body"></tbody>
             </table>
           </div>
-          <form id="add-holding" class="add-holding" autocomplete="off">
-            <p id="holding-form-title" class="add-holding-title">
-              Add a holding
-            </p>
-            <div class="add-holding-grid">
-              <label class="field">
-                <span>Type</span>
-                <select name="assetClass">
-                  <option value="stock">Stock</option>
-                  <option value="etf">ETF</option>
-                  <option value="fund">Fund</option>
-                  <option value="bond">Bond</option>
-                  <option value="crypto">Crypto</option>
-                  <option value="cash">Cash</option>
-                  <option value="other">Other</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>Name</span>
-                <input
-                  name="name"
-                  required
-                  maxlength="60"
-                  placeholder="e.g. Apple"
-                />
-              </label>
-              <label class="field">
-                <span>Symbol <em>(optional)</em></span>
-                <input name="symbol" maxlength="12" placeholder="AAPL" />
-              </label>
-              <label class="field">
-                <span>Quantity <em>(optional)</em></span>
-                <input
-                  name="quantity"
-                  type="number"
-                  step="any"
-                  min="0"
-                  placeholder="0"
-                />
-              </label>
-              <label class="field">
-                <span>Currency</span>
-                <select name="currency">
-                  <option value="USD">USD ($)</option>
-                  <option value="GBP">GBP (£)</option>
-                  <option value="EUR">EUR (€)</option>
-                  <option value="PLN">PLN (zł)</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>Amount invested</span>
-                <span class="input-wrap">
-                  <span class="prefix currency-prefix">$</span>
+        </section>
+        <div id="holding-modal" class="modal-overlay" hidden>
+          <div
+            class="modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="holding-form-title"
+          >
+            <form id="add-holding" class="add-holding" autocomplete="off">
+              <p id="holding-form-title" class="add-holding-title">
+                Add a holding
+              </p>
+              <div class="add-holding-grid">
+                <label class="field">
+                  <span>Type</span>
+                  <select name="assetClass">
+                    <option value="stock">Stock</option>
+                    <option value="etf">ETF</option>
+                    <option value="fund">Fund</option>
+                    <option value="bond">Bond</option>
+                    <option value="crypto">Crypto</option>
+                    <option value="cash">Cash</option>
+                    <option value="other">Other</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Name</span>
                   <input
-                    name="amountInvested"
+                    name="name"
+                    required
+                    maxlength="60"
+                    placeholder="e.g. Apple"
+                  />
+                </label>
+                <label class="field">
+                  <span>Symbol <em>(optional)</em></span>
+                  <input name="symbol" maxlength="12" placeholder="AAPL" />
+                </label>
+                <label class="field">
+                  <span>Quantity <em>(optional)</em></span>
+                  <input
+                    name="quantity"
                     type="number"
                     step="any"
                     min="0"
-                    required
                     placeholder="0"
                   />
-                </span>
-              </label>
-              <label class="field">
-                <span>Current value <em>(optional)</em></span>
-                <span class="input-wrap">
-                  <span class="prefix currency-prefix">$</span>
-                  <input
-                    name="currentValueManual"
-                    type="number"
-                    step="any"
-                    min="0"
-                    placeholder="auto"
-                  />
-                </span>
-              </label>
-              <label class="field">
-                <span>Account <em>(optional)</em></span>
-                <input name="account" maxlength="40" placeholder="e.g. ISA" />
-              </label>
-              <label class="field">
-                <span>Purchase date <em>(optional)</em></span>
-                <input name="purchaseDate" type="date" />
-              </label>
-            </div>
-            <div class="add-holding-actions">
-              <button type="submit" id="holding-submit">Add holding</button>
-              <button
-                type="button"
-                id="holding-cancel"
-                class="ghost-btn"
-                hidden
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-          <div class="holdings-totals">
-            <div class="total-cell">
-              <span class="total-label">Total value</span>
-              <strong id="holdings-total">—</strong>
-            </div>
-            <div class="total-cell">
-              <span class="total-label">Total cost</span>
-              <strong id="holdings-cost">—</strong>
-            </div>
-            <div class="total-cell">
-              <span class="total-label">Total P&amp;L</span>
-              <strong id="holdings-pnl">—</strong>
-            </div>
+                </label>
+                <label class="field">
+                  <span>Currency</span>
+                  <select name="currency">
+                    <option value="USD">USD ($)</option>
+                    <option value="GBP">GBP (£)</option>
+                    <option value="EUR">EUR (€)</option>
+                    <option value="PLN">PLN (zł)</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Amount invested</span>
+                  <span class="input-wrap">
+                    <span class="prefix currency-prefix">$</span>
+                    <input
+                      name="amountInvested"
+                      type="number"
+                      step="any"
+                      min="0"
+                      required
+                      placeholder="0"
+                    />
+                  </span>
+                </label>
+                <label class="field">
+                  <span>Current value <em>(optional)</em></span>
+                  <span class="input-wrap">
+                    <span class="prefix currency-prefix">$</span>
+                    <input
+                      name="currentValueManual"
+                      type="number"
+                      step="any"
+                      min="0"
+                      placeholder="auto"
+                    />
+                  </span>
+                </label>
+                <label class="field">
+                  <span>Account <em>(optional)</em></span>
+                  <input name="account" maxlength="40" placeholder="e.g. ISA" />
+                </label>
+                <label class="field">
+                  <span>Purchase date <em>(optional)</em></span>
+                  <input name="purchaseDate" type="date" />
+                </label>
+              </div>
+              <div class="add-holding-actions">
+                <button type="submit" id="holding-submit">Add holding</button>
+                <button type="button" id="holding-cancel" class="ghost-btn">
+                  Cancel
+                </button>
+              </div>
+            </form>
           </div>
-          <p id="portfolio-fx-note" class="form-status" role="status" hidden>
-            Totals mix currencies — subscribe to <strong>FX Rates</strong> in
-            Overseer's Live Data tab for accurate conversion.
-          </p>
-        </section>
+        </div>
       </section>
 
       <!-- Market (searchable live prices) -->
@@ -320,7 +361,10 @@
               Live prices for the stocks your project tracks. Search by symbol.
             </p>
           </div>
-          <div class="market-search-wrap">
+          <div class="market-controls">
+            <select id="market-country" aria-label="Filter by country">
+              <option value="">All countries</option>
+            </select>
             <input
               id="market-search"
               type="search"
@@ -331,6 +375,27 @@
           </div>
           <div id="markets-body" class="markets-empty"></div>
         </section>
+        <div id="asset-info-modal" class="modal-overlay" hidden>
+          <div
+            class="modal-card asset-info-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="asset-info-title"
+          >
+            <div class="asset-info-head">
+              <h3 id="asset-info-title">Asset</h3>
+              <button
+                type="button"
+                id="asset-info-close"
+                class="ghost-btn"
+                aria-label="Close"
+              >
+                Close
+              </button>
+            </div>
+            <div id="asset-info-body"></div>
+          </div>
+        </div>
       </section>
 
       <!-- Forecast -->
