@@ -24,13 +24,46 @@ let recalcForecast = null;
 // The latest saved profile, kept in memory for the Home digest + advisor.
 let appProfile = {};
 
+// Resolved locale set ({ country, currency, language, hour12 }) and its two raw
+// layers (user-global default + per-app override). The resolved currency +
+// country drive the whole UI; the Settings tab edits them. activeCurrency /
+// activeCountry are derived from this.
+let appSettings = null;
+let settingsLayers = { global: null, app: null };
+const SETTINGS_KEY = "locale";
+const SETTINGS_GLOBAL_LS = "overseer.settings.global.locale";
+const SETTINGS_APP_LS = "planner.settings.app.locale";
+
+function locale() {
+  return window.PlannerLocale;
+}
+// The BCP-47 tag every formatter uses, from the resolved locale.
+function currentLocaleTag() {
+  const lib = locale();
+  return lib && appSettings ? lib.localeTag(appSettings) : "en-US";
+}
+// A currency's symbol in the active locale (handles currencies beyond the four
+// seeded markets, e.g. CHF → "CHF", kr).
+function currencySymbolFor(cur) {
+  const lib = locale();
+  if (lib) {
+    return lib.currencySymbol({
+      currency: cur || activeCurrency,
+      language: appSettings ? appSettings.language : "en",
+      country: appSettings ? appSettings.country : "US",
+    });
+  }
+  return CURRENCY_SYMBOL[cur] || cur;
+}
+
 const currencyFmtCache = new Map();
 function currencyFormatter(currency, digits) {
   const cur = currency || "USD";
-  const cacheKey = `${cur}:${digits}`;
+  const tag = currentLocaleTag();
+  const cacheKey = `${tag}:${cur}:${digits}`;
   let fmt = currencyFmtCache.get(cacheKey);
   if (!fmt) {
-    fmt = new Intl.NumberFormat("en-US", {
+    fmt = new Intl.NumberFormat(tag, {
       style: "currency",
       currency: cur,
       maximumFractionDigits: digits,
@@ -46,11 +79,29 @@ function formatPrice(value, currency) {
   return currencyFormatter(currency || activeCurrency, 2).format(value);
 }
 function formatPct(value) {
+  const lib = locale();
+  if (lib && appSettings)
+    return lib.formatPercent(value, appSettings, { signed: true });
   return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
 }
 function formatSignedMoney(value, currency) {
   const sign = value >= 0 ? "+" : "−";
   return `${sign}${currencyFormatter(currency || activeCurrency, 0).format(Math.abs(value))}`;
+}
+// A timestamp formatted in the active locale (date + time, honoring 12/24h);
+// falls back to the raw value before the locale lib loads.
+function formatTimestamp(value) {
+  if (!value) return "";
+  const lib = locale();
+  if (lib && appSettings) return lib.formatDateTime(value, appSettings);
+  return String(value);
+}
+// A return-rate percent (no +/− sign) in the active locale.
+function formatRatePct(value) {
+  const lib = locale();
+  if (lib && appSettings)
+    return lib.formatPercent(value, appSettings, { signed: false });
+  return `${value}%`;
 }
 
 async function loadJson(path) {
@@ -325,6 +376,12 @@ let marketCountry = "";
 // FX rates relative to USD (USD→X), from the `fx-rate` live source; `USD` is the
 // implicit base (= 1). The rest fill in when the project is subscribed to FX Rates.
 const FX_CURRENCIES = Object.keys(CURRENCY_SYMBOL);
+// Currencies to read FX rates for: the seeded markets plus the active display
+// currency, so a display currency beyond the four still picks up a rate when
+// the FX source carries it.
+function fxCurrencies() {
+  return Array.from(new Set([...FX_CURRENCIES, activeCurrency]));
+}
 let fxRates = { USD: 1 };
 
 function fxRate(currency) {
@@ -360,8 +417,8 @@ async function loadLiveData() {
   livePrices.clear();
   allMarkets = [];
   fxRates = { USD: 1 };
-  // The portfolio's display currency follows the chosen country.
-  activeCurrency = COUNTRY_CONFIG[activeCountry].currency;
+  // The portfolio's display currency follows the resolved locale.
+  if (appSettings) activeCurrency = appSettings.currency;
   const bridge = window.OverseerBridge;
   if (!bridge || !bridge.embedded || !bridge.readLiveData) return;
   let subscribed;
@@ -375,7 +432,7 @@ async function loadLiveData() {
     if (recordType === "fx-rate") {
       for (const rec of source.records || []) {
         const c = rec.content || {};
-        for (const cur of FX_CURRENCIES) {
+        for (const cur of fxCurrencies()) {
           if (typeof c[cur] === "number") fxRates[cur] = c[cur];
         }
       }
@@ -433,7 +490,11 @@ function changeOverDays(history, days) {
 }
 
 function pctText(p) {
-  return p === null ? "—" : `${p >= 0 ? "+" : ""}${p.toFixed(1)}%`;
+  if (p === null) return "—";
+  const lib = locale();
+  if (lib && appSettings)
+    return lib.formatPercent(p, appSettings, { signed: true });
+  return `${p >= 0 ? "+" : ""}${p.toFixed(1)}%`;
 }
 function pctClass(p) {
   return p === null ? "" : p >= 0 ? "pnl-positive" : "pnl-negative";
@@ -514,7 +575,7 @@ function renderMarkets() {
         <span class="market-symbol">${sym}</span>
         <span class="market-badge">${escapeHtml(m.market)}</span>
       </td>
-      <td class="num"${m.t ? ` title="as of ${escapeHtml(String(m.t))}"` : ""}>${price}</td>
+      <td class="num"${m.t ? ` title="as of ${escapeHtml(formatTimestamp(m.t))}"` : ""}>${price}</td>
       <td class="num ${pctClass(c1)}">${pctText(c1)}</td>
       <td class="num ${pctClass(c7)}">${pctText(c7)}</td>
       <td class="num ${pctClass(c30)}">${pctText(c30)}</td>
@@ -775,7 +836,7 @@ function renderHoldings(holdings) {
       ? `<span class="asset-account">${escapeHtml(h.account)}</span>`
       : "";
     const liveTag = live
-      ? `<span class="live-dot" title="Live ${escapeHtml(formatPrice(live.v, live.currency))}/share${live.t ? " @ " + escapeHtml(live.t) : ""}">● live</span>`
+      ? `<span class="live-dot" title="Live ${escapeHtml(formatPrice(live.v, live.currency))}/share${live.t ? " @ " + escapeHtml(formatTimestamp(live.t)) : ""}">● live</span>`
       : "";
     const investedText = `${invD.approx ? "≈ " : ""}${formatMoney(invD.amount, invD.currency)}`;
     const currentText = `${curD.approx ? "≈ " : ""}${formatMoney(curD.amount, curD.currency)}`;
@@ -936,7 +997,7 @@ function readHoldingForm(form) {
 function syncHoldingFormPrefix() {
   const form = document.getElementById("add-holding");
   if (!form || !form.currency) return;
-  const sym = CURRENCY_SYMBOL[form.currency.value] || form.currency.value;
+  const sym = currencySymbolFor(form.currency.value);
   for (const el of form.querySelectorAll(".currency-prefix")) {
     el.textContent = sym;
   }
@@ -1776,6 +1837,8 @@ function formatNewsDate(value) {
   if (!value) return "";
   const t = Date.parse(value);
   if (Number.isNaN(t)) return "";
+  const lib = locale();
+  if (lib && appSettings) return lib.formatDate(t, appSettings);
   return new Date(t).toLocaleDateString(undefined, {
     year: "numeric",
     month: "short",
@@ -2370,12 +2433,15 @@ function setupForecast(profile) {
     document.getElementById("forecast-opt").textContent = formatMoney(
       forecast.optimistic.finalValue,
     );
-    document.getElementById("forecast-rate-cons").textContent =
-      `${forecast.band.conservative}%`;
-    document.getElementById("forecast-rate-exp").textContent =
-      `${forecast.band.expected}%`;
-    document.getElementById("forecast-rate-opt").textContent =
-      `${forecast.band.optimistic}%`;
+    document.getElementById("forecast-rate-cons").textContent = formatRatePct(
+      forecast.band.conservative,
+    );
+    document.getElementById("forecast-rate-exp").textContent = formatRatePct(
+      forecast.band.expected,
+    );
+    document.getElementById("forecast-rate-opt").textContent = formatRatePct(
+      forecast.band.optimistic,
+    );
 
     renderForecastChart(forecast);
   }
@@ -2389,37 +2455,229 @@ function setupForecast(profile) {
   }
 }
 
-// --- Country selector + currency-driven UI --------------------------------
-function setupCountry() {
-  const sel = document.getElementById("country-select");
-  sel.innerHTML = "";
-  for (const [code, cfg] of Object.entries(COUNTRY_CONFIG)) {
+// --- Currency-driven UI ---------------------------------------------------
+// Country + currency now come from the resolved locale (the Settings tab), not
+// a top-bar selector. Make sure the active display currency is selectable in the
+// add-holding form (its denomination currency), even beyond the four markets.
+function ensureHoldingCurrencyOption() {
+  const form = document.getElementById("add-holding");
+  if (!form || !form.currency || !activeCurrency) return;
+  const sel = form.currency;
+  if (![...sel.options].some((o) => o.value === activeCurrency)) {
     const opt = document.createElement("option");
-    opt.value = code;
-    opt.textContent = cfg.label;
+    opt.value = activeCurrency;
+    opt.textContent = `${activeCurrency} (${currencySymbolFor(activeCurrency)})`;
     sel.append(opt);
   }
-  sel.value = activeCountry;
-  sel.addEventListener("change", async () => {
-    activeCountry = sel.value;
-    activeCurrency = COUNTRY_CONFIG[activeCountry].currency;
-    await saveProfile({ country: activeCountry });
-    updateCurrencyUI();
-    await refreshLive();
-    // Surface the "tailored for another country — refresh" hint on Proposals.
-    await refreshProposalsFromStore();
-  });
 }
 
 function updateCurrencyUI() {
-  const symbol = CURRENCY_SYMBOL[activeCurrency] || activeCurrency;
+  const symbol = currencySymbolFor(activeCurrency);
   for (const el of document.querySelectorAll(".currency-prefix")) {
     el.textContent = symbol;
   }
+  ensureHoldingCurrencyOption();
   // The add-holding money fields follow the holding's own currency, not display.
   syncHoldingFormPrefix();
   if (recalcCalculator) recalcCalculator();
   if (recalcForecast) recalcForecast();
+}
+
+// --- Settings / locale ----------------------------------------------------
+function embedded() {
+  return !!(window.OverseerBridge && window.OverseerBridge.embedded);
+}
+function lsGetJson(key) {
+  try {
+    return JSON.parse(localStorage.getItem(key)) || null;
+  } catch {
+    return null;
+  }
+}
+function lsSetJson(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+async function loadSettingsLayers() {
+  if (embedded()) {
+    try {
+      return (
+        (await window.OverseerBridge.getSettings(SETTINGS_KEY)) || {
+          global: null,
+          app: null,
+        }
+      );
+    } catch {
+      return { global: null, app: null };
+    }
+  }
+  return {
+    global: lsGetJson(SETTINGS_GLOBAL_LS),
+    app: lsGetJson(SETTINGS_APP_LS),
+  };
+}
+async function persistSettings(level, value) {
+  if (embedded()) {
+    await window.OverseerBridge.putSettings(SETTINGS_KEY, level, value);
+  } else {
+    lsSetJson(level === "global" ? SETTINGS_GLOBAL_LS : SETTINGS_APP_LS, value);
+  }
+}
+async function clearAppOverride() {
+  if (embedded()) {
+    try {
+      await window.OverseerBridge.clearAppSetting(SETTINGS_KEY);
+    } catch {
+      // ignore — clearing is best-effort
+    }
+  } else {
+    try {
+      localStorage.removeItem(SETTINGS_APP_LS);
+    } catch {
+      // ignore storage errors
+    }
+  }
+}
+
+// Resolve the locale set + derive the app's active country/currency from it.
+async function initSettings() {
+  const lib = locale();
+  const inferred = lib
+    ? lib.inferLocaleSettings()
+    : { country: "US", language: "en", currency: "USD", hour12: false };
+  settingsLayers = await loadSettingsLayers();
+  // First run: seed the user-global default from inference so the same set is
+  // applied across every app until the user changes it.
+  if (lib && !settingsLayers.global && !settingsLayers.app) {
+    try {
+      await persistSettings("global", inferred);
+      settingsLayers.global = inferred;
+    } catch {
+      // ignore — fall back to inference in memory
+    }
+  }
+  appSettings = lib ? lib.resolveLayers(settingsLayers, inferred) : inferred;
+  activeCountry = appSettings.country;
+  activeCurrency = appSettings.currency;
+}
+
+// Apply a freshly-resolved locale across the app: re-derive currency/country,
+// mirror the country into the profile (the backend tailors proposals/advice off
+// `profile.country`), repaint currency chrome, and refresh the live + proposal
+// views — the same effects the old country selector triggered.
+async function applyLocaleSettings() {
+  activeCountry = appSettings.country;
+  activeCurrency = appSettings.currency;
+  if (appProfile.country !== activeCountry) {
+    await saveProfile({ country: activeCountry });
+  }
+  updateCurrencyUI();
+  await refreshLive();
+  await refreshProposalsFromStore();
+}
+
+function fillSelect(el, opts, value) {
+  if (!el) return;
+  el.innerHTML = "";
+  for (const o of opts) {
+    const opt = document.createElement("option");
+    opt.value = o.value;
+    opt.textContent = o.label;
+    el.append(opt);
+  }
+  if (value != null) el.value = value;
+}
+// Ensure the current value is selectable even if outside the curated list.
+function withValue(opts, value, namer) {
+  if (value == null || opts.some((o) => o.value === value)) return opts;
+  return [{ value, label: namer(value) }].concat(opts);
+}
+
+function fillSettingsForm(s, scope) {
+  const lib = locale();
+  if (!lib) return;
+  fillSelect(
+    document.getElementById("settings-country"),
+    withValue(lib.countryOptions(), s.country, lib.countryName),
+    s.country,
+  );
+  fillSelect(
+    document.getElementById("settings-currency"),
+    withValue(lib.currencyOptions(), s.currency, lib.currencyName),
+    s.currency,
+  );
+  fillSelect(
+    document.getElementById("settings-language"),
+    withValue(lib.languageOptions(), s.language, lib.languageName),
+    s.language,
+  );
+  const hour12 = document.getElementById("settings-hour12");
+  if (hour12) hour12.value = s.hour12 ? "12" : "24";
+  for (const r of document.querySelectorAll(
+    '#settings-form input[name="scope"]',
+  )) {
+    r.checked = r.value === scope;
+  }
+}
+
+function setupSettings() {
+  const form = document.getElementById("settings-form");
+  if (!form) return;
+  fillSettingsForm(appSettings, settingsLayers.app ? "app" : "global");
+
+  const country = document.getElementById("settings-country");
+  if (country) {
+    country.addEventListener("change", () => {
+      const lib = locale();
+      if (!lib) return;
+      const c = country.value;
+      const currency = document.getElementById("settings-currency");
+      if (currency) currency.value = lib.currencyForCountry(c);
+      const hour12 = document.getElementById("settings-hour12");
+      if (hour12) hour12.value = lib.hour12ForCountry(c) ? "12" : "24";
+    });
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const lib = locale();
+    if (!lib) return;
+    const data = new FormData(form);
+    const value = lib.normalizeSettings({
+      country: String(data.get("country") || ""),
+      currency: String(data.get("currency") || ""),
+      language: String(data.get("language") || ""),
+      hour12: String(data.get("hour12") || "24") === "12",
+    });
+    const scope = String(data.get("scope") || "global");
+    const status = document.getElementById("settings-status");
+    try {
+      if (scope === "global") {
+        await persistSettings("global", value);
+        await clearAppOverride();
+        settingsLayers.global = value;
+        settingsLayers.app = null;
+      } else {
+        await persistSettings("app", value);
+        settingsLayers.app = value;
+      }
+      appSettings = lib.resolveLayers(
+        settingsLayers,
+        lib.inferLocaleSettings(),
+      );
+      await applyLocaleSettings();
+      fillSettingsForm(appSettings, settingsLayers.app ? "app" : "global");
+      if (status)
+        status.textContent = "Saved. Your region settings are applied.";
+    } catch {
+      if (status)
+        status.textContent = "Could not save settings — please try again.";
+    }
+  });
 }
 
 // --- Tabs (hash-routed; one <section> per tab) ----------------------------
@@ -2434,6 +2692,7 @@ const TABS = [
   { id: "forecast", label: "Forecast" },
   { id: "news", label: "News" },
   { id: "calculator", label: "Calculator" },
+  { id: "settings", label: "Settings" },
 ];
 
 // A brand-new user lands on the Start wizard; once onboarded (matured), Home is
@@ -2575,16 +2834,18 @@ function setupTabs() {
 
 async function init() {
   try {
+    // Resolve the locale first so the very first currency paint is correct.
+    await initSettings();
     const profile = await loadProfile();
     onboarded = isOnboarded(profile);
     appProfile = profile;
-    activeCountry = COUNTRY_CONFIG[profile.country]
-      ? profile.country
-      : DEFAULT_COUNTRY;
-    activeCurrency = COUNTRY_CONFIG[activeCountry].currency;
+    // Keep `profile.country` in sync with the resolved-locale country — the
+    // backend tailors proposals/advice off it.
+    if (appProfile.country !== activeCountry) {
+      await saveProfile({ country: activeCountry });
+    }
     const topPicks = await loadJson("./data/top-picks.json");
 
-    setupCountry();
     setupProfile(profile);
     setupStart(profile);
     renderCalculator();
@@ -2603,6 +2864,7 @@ async function init() {
     await refreshHoldings();
     // Now the initial showTab fires with both setup wired and data loaded.
     setupTabs();
+    setupSettings();
     await refreshLive();
     setInterval(() => {
       refreshLive().catch(() => {});

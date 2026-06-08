@@ -41,6 +41,14 @@
     deleteData: (payload) => call("data.delete", payload),
     // The records of every live-data source this project is subscribed to.
     readLiveData: () => call("live-data.read", undefined),
+    // Layered settings: a user-global default (shared across every app) plus an
+    // optional per-app override. `getSettings` returns both raw layers
+    // ({ global, app }); resolve them as `app ?? global ?? inferred`.
+    getSettings: (key) => call("settings.get", { key: key }),
+    putSettings: (key, level, value) =>
+      call("settings.put", { key: key, level: level, value: value }),
+    // Clear this app's override so the user-global default applies again.
+    clearAppSetting: (key) => call("settings.delete", { key: key }),
     // Run a named analysis job (web search + LLM); it writes records this app
     // re-reads via data.query. Slow (often >90s), so allow 3 minutes. Even if
     // this call times out, the backend still writes the record — callers re-read.

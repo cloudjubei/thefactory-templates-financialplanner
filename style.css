@@ -1008,13 +1008,10 @@ td.num.is-live {
 
 /* ---- Multi-tab shell ----------------------------------------------------- */
 .appbar {
-  position: sticky;
-  top: 0;
-  z-index: 5;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
@@ -1025,45 +1022,38 @@ td.num.is-live {
   font-size: 16px;
   color: var(--text);
 }
-.country-picker {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.appbar .tagline {
+  margin: 0;
   font-size: 13px;
   color: var(--muted);
 }
-.country-picker select {
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-}
+/* Underline tabs (shared visual language with the Car Finder template). The bar
+   sticks to the top once the appbar scrolls past; it wraps rather than
+   horizontally scrolling so no tab is hidden off-screen on a phone. */
 .tabbar {
   position: sticky;
-  top: 53px;
+  top: 0;
   z-index: 4;
   display: flex;
   gap: 4px;
-  overflow-x: auto;
-  padding: 8px 12px;
+  flex-wrap: wrap;
+  padding: 0 16px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
-  -webkit-overflow-scrolling: touch;
 }
 .tab-btn {
-  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 14px;
+  appearance: none;
   border: 0;
-  border-radius: 999px;
+  border-bottom: 2px solid transparent;
   background: transparent;
-  color: var(--muted);
+  padding: 10px 14px;
   font: inherit;
+  font-size: 14px;
   font-weight: 600;
+  color: var(--muted);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -1097,11 +1087,11 @@ td.num.is-live {
   box-shadow: 0 0 0 2px var(--surface);
 }
 .tab-btn:hover {
-  background: var(--accent-soft);
+  color: var(--text);
 }
 .tab-btn.is-active {
-  background: var(--accent);
-  color: #fff;
+  color: var(--accent);
+  border-bottom-color: var(--accent);
 }
 .tab-btn[hidden] {
   display: none;
@@ -1122,6 +1112,77 @@ td.num.is-live {
 }
 .tab-panel[hidden] {
   display: none;
+}
+
+/* ---- Settings form ------------------------------------------------------- */
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+@media (max-width: 560px) {
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.settings-form .field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.settings-form .field > span {
+  font-size: 13px;
+  color: var(--muted);
+}
+.settings-form select {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+.settings-form .field-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+.settings-scope {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.settings-scope legend {
+  padding: 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.settings-form .radio-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 14px;
+}
+.settings-form .radio-row input {
+  accent-color: var(--accent);
+}
+.settings-form .radio-row em {
+  color: var(--muted);
+  font-style: normal;
+}
+.settings-form .form-actions {
+  margin-top: 16px;
+}
+.settings-form button {
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 /* ---- Profile form + status ----------------------------------------------- */

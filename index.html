@@ -9,6 +9,7 @@
       src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
       defer
     ></script>
+    <script src="locale.js" defer></script>
     <script src="bridge.js" defer></script>
     <script src="forecast.js" defer></script>
     <script src="app.js" defer></script>
@@ -16,10 +17,7 @@
   <body>
     <header class="appbar">
       <p class="brand">Investment Planner</p>
-      <label class="country-picker">
-        <span>Country</span>
-        <select id="country-select" aria-label="Your country"></select>
-      </label>
+      <p class="tagline">Plan, track, and grow your investments.</p>
     </header>
 
     <nav class="tabbar" id="tabbar" role="tablist" aria-label="Sections"></nav>
@@ -620,6 +618,65 @@
           <div id="advice-body" class="advice-empty">
             <p>Open this project in Overseer to get personalised advice.</p>
           </div>
+        </section>
+      </section>
+
+      <!-- Settings (region, currency, language, time format) -->
+      <section id="tab-settings" class="tab-panel" role="tabpanel" hidden>
+        <section class="card" aria-labelledby="settings-h">
+          <div class="card-head">
+            <h2 id="settings-h">Settings</h2>
+            <p class="card-sub">
+              Your region, currency, language and time format. We guess these
+              from your device the first time; adjust them whenever you like.
+            </p>
+          </div>
+          <form id="settings-form" class="settings-form" autocomplete="off">
+            <div class="settings-grid">
+              <label class="field">
+                <span>Country / region</span>
+                <select name="country" id="settings-country"></select>
+              </label>
+              <label class="field">
+                <span>Currency</span>
+                <select name="currency" id="settings-currency"></select>
+              </label>
+              <label class="field">
+                <span>Language</span>
+                <select name="language" id="settings-language"></select>
+                <small class="field-hint"
+                  >Stored for future translations — the app stays in English for
+                  now.</small
+                >
+              </label>
+              <label class="field">
+                <span>Time format</span>
+                <select name="hour12" id="settings-hour12">
+                  <option value="24">24-hour (14:30)</option>
+                  <option value="12">12-hour (2:30 PM)</option>
+                </select>
+              </label>
+            </div>
+
+            <fieldset class="settings-scope">
+              <legend>Apply these to</legend>
+              <label class="radio-row">
+                <input type="radio" name="scope" value="global" />
+                <span>All my apps <em>(my default everywhere)</em></span>
+              </label>
+              <label class="radio-row">
+                <input type="radio" name="scope" value="app" />
+                <span
+                  >Only Investment Planner <em>(override just here)</em></span
+                >
+              </label>
+            </fieldset>
+
+            <div class="form-actions">
+              <button type="submit">Save settings</button>
+            </div>
+            <p id="settings-status" class="form-status" role="status"></p>
+          </form>
         </section>
       </section>
     </main>
