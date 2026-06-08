@@ -24,9 +24,6 @@ html,
 body {
   margin: 0;
   padding: 0;
-  /* The holdings table scrolls horizontally inside .table-wrap; the page
-     itself should never scroll sideways (esp. inside the mobile WebView). */
-  overflow-x: hidden;
 }
 
 /* The gradient lives on the root so it always fills the full viewport (no
@@ -41,12 +38,11 @@ body {
     Arial, sans-serif;
   color: var(--text);
   line-height: 1.45;
-  padding: 28px 24px 40px;
-  max-width: 1080px;
-  margin-inline: auto;
-  /* Full-height flex column so the footer pins to the bottom even when the
-     content is short. */
-  min-height: 100dvh;
+  /* App-shell: the body is exactly the viewport and never scrolls. The header
+     is a fixed row at the top and `.app-scroll` is the only scrolling area, so
+     overscroll bounces the content — not the header. */
+  height: 100dvh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -720,9 +716,6 @@ a.news-item-title:hover {
 }
 
 @media (max-width: 600px) {
-  body {
-    padding: 20px 14px 32px;
-  }
   .card {
     padding: 16px;
   }
@@ -1007,53 +1000,45 @@ td.num.is-live {
 }
 
 /* ---- Multi-tab shell ----------------------------------------------------- */
-.appbar {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
+/* The header is just the tab bar — a fixed row outside the scroll area. */
+.topbar {
+  flex: 0 0 auto;
+  z-index: 5;
   background: var(--surface);
 }
-.appbar .brand {
-  margin: 0;
-  font-weight: 700;
-  font-size: 16px;
-  color: var(--text);
+/* The only scrolling area: content + footer scroll under the fixed header. */
+.app-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  display: flex;
+  flex-direction: column;
 }
-.appbar .tagline {
-  margin: 0;
-  font-size: 13px;
-  color: var(--muted);
-}
-/* Underline tabs (shared visual language with the Car Finder template). The bar
-   sticks to the top once the appbar scrolls past; it wraps rather than
-   horizontally scrolling so no tab is hidden off-screen on a phone. */
+/* Pill tabs — a single horizontally-scrollable strip. */
 .tabbar {
-  position: sticky;
-  top: 0;
-  z-index: 4;
   display: flex;
   gap: 4px;
-  flex-wrap: wrap;
-  padding: 0 16px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 6px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
 .tab-btn {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  appearance: none;
+  padding: 8px 14px;
   border: 0;
-  border-bottom: 2px solid transparent;
+  border-radius: 999px;
   background: transparent;
-  padding: 10px 14px;
+  color: var(--muted);
   font: inherit;
   font-size: 14px;
   font-weight: 600;
-  color: var(--muted);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -1087,11 +1072,11 @@ td.num.is-live {
   box-shadow: 0 0 0 2px var(--surface);
 }
 .tab-btn:hover {
-  color: var(--text);
+  background: var(--accent-soft);
 }
 .tab-btn.is-active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
 }
 .tab-btn[hidden] {
   display: none;
