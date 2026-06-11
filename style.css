@@ -1016,7 +1016,11 @@ td.num.is-live {
   display: flex;
   flex-direction: column;
 }
-/* Pill tabs — a single horizontally-scrollable strip. */
+/* Pill tabs — a single horizontally-scrollable strip. The `::after` spacer
+   reserves room at the scroll end for Overseer's activity-model chip, floated
+   over the top-right of this surface, so the last tab never slides under it
+   (even on a narrow screen). A real flex item is used instead of trailing
+   padding, which some WebKit/WebView engines drop at the scroll end. */
 .tabbar {
   display: flex;
   gap: 4px;
@@ -1025,6 +1029,10 @@ td.num.is-live {
   padding: 6px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
+}
+.tabbar::after {
+  content: '';
+  flex: 0 0 160px;
 }
 .tab-btn {
   flex: 0 0 auto;

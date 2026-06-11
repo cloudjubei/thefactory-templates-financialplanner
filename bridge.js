@@ -54,5 +54,22 @@
     // this call times out, the backend still writes the record — callers re-read.
     runJob: (jobName, params) =>
       call("analysis.run", { jobName: jobName, params: params }, 180000),
+    // Start a DETACHED background activity. Returns { activityId } immediately;
+    // the activity keeps running server-side even if this app is closed or the
+    // user navigates away. Observe progress + results by re-reading records via
+    // data.query, and watch the nav-panel activity spinner.
+    startActivity: (activityType, params) =>
+      call(
+        "activities.start",
+        { activityType: activityType, params: params },
+        30000,
+      ),
+    listActivities: () => call("activities.list", undefined),
+    abortActivity: (activityId) =>
+      call("activities.abort", { activityId: activityId }),
+    // Resume a run that's no longer live (e.g. orphaned by a server restart).
+    // No-op if it's still genuinely running. Returns { activityId }.
+    resumeActivity: (activityId) =>
+      call("activities.resume", { activityId: activityId }, 30000),
   };
 })();

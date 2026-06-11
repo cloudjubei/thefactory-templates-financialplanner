@@ -1075,7 +1075,7 @@ function setupHoldingControls() {
     });
 }
 
-// --- Proposals (the opportunity analysis job, via the bridge) -------------
+// --- Proposals (a detached gather→rank pipeline activity, via the bridge) --
 // Map a (real, propagated) analysis error into a short user-facing line, falling
 // back to the raw message so an unexpected failure is still legible.
 function analysisErrorText(err) {
@@ -1094,14 +1094,182 @@ function analysisErrorText(err) {
 // The static picks shown when no live proposals exist yet (set in setupProposals).
 let proposalsStaticPicks = [];
 
+// The app owns the catalog SPEC: the queries, the extraction prompt (including
+// the product schema), and the dedup key fields. The generic `pipeline` engine
+// in Overseer stays oblivious to financial products — it just runs these and
+// stores the JSON. The market is the COUNTRY NAME (e.g. "Poland") and the
+// language is woven into the prompts so the model researches local-language
+// sources for the right market.
+function buildFinCatalogSpec(language) {
+  const langNote = language
+    ? ` Research ${language}-language and local sources for this market.`
+    : "";
+  return {
+    recordType: "catalog-fin-product",
+    keyFields: ["provider", "name"],
+    supplierQuery:
+      "banks, brokers, fund platforms and financial product providers offering savings and investment products to retail investors in {market}",
+    supplierInstructions:
+      "List EVERY provider offering savings or investment products to retail investors in {market} — be exhaustive: include banks and building societies, brokers and trading platforms, fund and ETF platforms, robo-advisors, and crypto exchanges." +
+      langNote +
+      ' Aim for the complete list (often 30+ providers). For EACH provider return a JSON object { "name": string, "tags": string[] }, where tags includes "popular" for the most widely used mainstream providers in this market and "premium" for premium/private-banking providers (a provider may have both, one, or neither). Return ONLY a JSON array of these objects, no prose or code fences.',
+    itemQuery:
+      "{supplier} savings and investment products rates fees minimum {market}",
+    itemInstructions:
+      "Extract every savings or investment product {supplier} currently offers to retail investors in {market}, with rates, fees and minimums." +
+      langNote +
+      ' Each item is a JSON object: { "name": string, "provider": string, ' +
+      '"productType": EXACTLY one lowercase value of savings|isa|bond|fund|etf|stock|crypto|pension, ' +
+      '"expectedReturnPct": number, "returnType": EXACTLY one lowercase value of fixed|variable|historical, ' +
+      '"riskLevel": EXACTLY one lowercase value of low|medium|high, "minInvestment": number, ' +
+      '"feesPct": number, "liquidity": EXACTLY one lowercase value of instant|notice|fixed-term, ' +
+      '"termMonths": number, "url": string }. ' +
+      "name is the official product name and provider is {supplier}. productType, returnType, riskLevel and liquidity MUST be lowercase English enums (exactly the values listed). " +
+      "expectedReturnPct is the advertised or historical annual return as a number like 4.5; returnType says whether that figure is fixed, variable, or a historical average. " +
+      "minInvestment MUST be a plain integer in the local currency with NO symbols, commas, or quotes. feesPct is the total annual fee as a number like 0.25. " +
+      "termMonths is an integer count of months for fixed-term products — OMIT it when the product is open-ended. " +
+      "url is the official {supplier} page for this product in {market}, copied EXACTLY from the sources — never invent or guess a URL. " +
+      "Omit any field you cannot determine from the sources rather than guessing. " +
+      'Example: { "name": "1 Year Fixed Rate Saver", "provider": "Example Bank", "productType": "savings", "expectedReturnPct": 4.3, "returnType": "fixed", "riskLevel": "low", "minInvestment": 1000, "feesPct": 0, "liquidity": "fixed-term", "termMonths": 12, "url": "https://www.examplebank.example/fixed-saver" }. ' +
+      "Return ONLY a JSON array, no prose or code fences.",
+  };
+}
+
+// Resolve the human market name + language from the resolved locale (the model
+// wants "Poland"/"Polish", not the codes "PL"/"pl").
+function localeMarket() {
+  const lib = locale();
+  const country = (appSettings && appSettings.country) || activeCountry;
+  const language = (appSettings && appSettings.language) || "";
+  return {
+    market: lib && country ? lib.countryName(country) : countryLabel(country),
+    language: lib && language ? lib.languageName(language) : language,
+  };
+}
+
+// The app maps its investor profile into the engine's generic inputs: a
+// semantic search query, hard FilterRule[]s, and an LLM rank prompt. The engine
+// stays finance-agnostic — every finance-ism lives in these mappers.
+const RISK_DETAIL = {
+  cautious: "cautious — protecting capital matters more than maximising returns",
+  balanced: "balanced — a mix of safety and growth",
+  adventurous: "adventurous — growth first, comfortable with volatility",
+};
+
+// The user's chosen product categories as lowercase labels for prompts (empty
+// selection = all, mirroring the profile form's default).
+function productTypeLabels(values) {
+  if (!Array.isArray(values)) return [];
+  return values.map((v) => {
+    const t = PRODUCT_TYPES.find((p) => p.value === v);
+    return (t ? t.label : v).toLowerCase();
+  });
+}
+
+function buildFinSearchQuery(profile) {
+  const bits = [
+    `Savings and investment products for a ${profile.risk || "balanced"} retail investor`,
+  ];
+  const lump = Number(profile.lumpSum) || 0;
+  const monthly = Number(profile.monthlyContribution) || 0;
+  if (lump > 0) bits.push(`investing a ${formatMoney(lump)} lump sum`);
+  if (monthly > 0) bits.push(`contributing ${formatMoney(monthly)} monthly`);
+  const types = productTypeLabels(profile.productTypes);
+  if (types.length) bits.push(`open to ${types.join(", ")}`);
+  if (profile.preferences) bits.push(`preferences: ${profile.preferences}`);
+  return bits.join(", ") + ".";
+}
+
+function buildFinFilters(profile) {
+  const filters = [];
+  const lump = Number(profile.lumpSum) || 0;
+  if (lump > 0)
+    filters.push({ field: "minInvestment", op: "lte", value: lump });
+  if (profile.risk === "cautious")
+    filters.push({ field: "riskLevel", op: "eq", value: "low" });
+  return filters;
+}
+
+function buildFinRankInstructions(profile) {
+  const lines = [
+    "You are a personal financial advisor. Score how well each candidate product fits the investor below, 0–100 (100 = ideal).",
+    "Investor profile:",
+    `- Risk appetite: ${RISK_DETAIL[profile.risk] || profile.risk || "balanced"}.`,
+  ];
+  const lump = Number(profile.lumpSum) || 0;
+  if (lump > 0)
+    lines.push(
+      `- Lump sum to invest ≈ ${formatMoney(lump)} (the minimum investment must fit; penalise products requiring more).`,
+    );
+  const monthly = Number(profile.monthlyContribution) || 0;
+  if (monthly > 0)
+    lines.push(`- Adds ${formatMoney(monthly)} in contributions monthly.`);
+  const types = productTypeLabels(profile.productTypes);
+  if (types.length) lines.push(`- Open to: ${types.join(", ")}.`);
+  if (profile.preferences) lines.push(`- Preferences: ${profile.preferences}`);
+  const { market } = localeMarket();
+  if (market)
+    lines.push(
+      `- Based in ${market} — favour products retail investors there can actually open.`,
+    );
+  lines.push(
+    "Each candidate is a JSON object { key, content }. Score EVERY candidate you can reasonably assess — " +
+      "they are bucketed into tiers afterwards, so include good products even if they miss one preference. " +
+      'Return ONLY a JSON array as [{ "key": echo the candidate key, "score": 0–100, "why": one short sentence }]. ' +
+      "Only omit products that are completely irrelevant. No prose, no code fences.",
+  );
+  return lines.join("\n");
+}
+
+// Recommendation tiers (mirrors the engine's RecommendationTier) and how each
+// is labelled for the investor.
+const TIER_ORDER = ["perfect", "good", "ok", "alternative", "rest"];
+const TIER_LABEL = {
+  perfect: "Perfect matches",
+  good: "Good matches",
+  ok: "Worth a look",
+  alternative: "Alternatives",
+  rest: "The rest",
+};
+
+// Map a ranked catalog product ({ key, content, score, why, tier }) to the pick
+// shape the proposal cards render. The Investigate flow keys off
+// { name, symbol, assetClass }, so those fields are preserved (financial
+// products carry no symbol; the renderer tolerates that).
+const PRODUCT_TYPE_ASSET_CLASS = {
+  savings: "cash",
+  isa: "cash",
+  bond: "bond",
+  fund: "fund",
+  etf: "etf",
+  stock: "stock",
+  crypto: "crypto",
+  pension: "other",
+};
+
+function productToPick(product) {
+  const content = product.content || {};
+  const pick = {
+    name: content.name || product.key,
+    assetClass: PRODUCT_TYPE_ASSET_CLASS[content.productType] || "other",
+    rationale: product.why || "",
+    tier: product.tier,
+    score: product.score,
+  };
+  const where = [content.provider, content.url].filter(Boolean).join(" — ");
+  if (where) pick.whereAvailable = where;
+  return pick;
+}
+
 async function refreshProposalsFromStore() {
-  const content = await loadLatestOpportunityContent();
-  const items = content && Array.isArray(content.items) ? content.items : [];
-  renderTopPicks(items.length ? items : proposalsStaticPicks);
+  const content = await loadLatestProposalsContent();
+  const items = content ? content.items : [];
+  renderRankedPicks(items.length ? items : proposalsStaticPicks);
   const status = document.getElementById("opportunities-status");
   if (!status) return;
-  if (content && content.country && content.country !== activeCountry) {
-    status.textContent = `These proposals were ${STALE_COUNTRY_MARK} — "Find opportunities" again to tailor them to ${countryLabel(activeCountry)}.`;
+  const { market } = localeMarket();
+  if (content && content.market && market && content.market !== market) {
+    status.textContent = `These proposals were ${STALE_COUNTRY_MARK} — "Find opportunities" again to tailor them to ${market}.`;
   } else if (status.textContent.includes(STALE_COUNTRY_MARK)) {
     // Clear only our own stale note, never a findProposals empty/error message.
     status.textContent = "";
@@ -1126,6 +1294,32 @@ function renderTopPicks(picks) {
     list.append(renderPickCard(pick));
   }
   body.append(list);
+}
+
+// Ranked picks grouped under simple tier headings (perfect/good/…); falls back
+// to the flat list when any pick lacks a tier (e.g. the static fallback).
+function renderRankedPicks(picks) {
+  const body = document.getElementById("top-picks-body");
+  if (!body) return;
+  const items = Array.isArray(picks) ? picks : [];
+  if (!items.length || !items.every((p) => TIER_LABEL[p.tier])) {
+    renderTopPicks(items);
+    return;
+  }
+  body.className = "";
+  body.innerHTML = "";
+  for (const tier of TIER_ORDER) {
+    const group = items.filter((p) => p.tier === tier);
+    if (!group.length) continue;
+    const heading = document.createElement("h3");
+    heading.className = "investigation-heading";
+    heading.textContent = TIER_LABEL[tier];
+    body.append(heading);
+    const list = document.createElement("ul");
+    list.className = "top-picks-list";
+    for (const pick of group) list.append(renderPickCard(pick));
+    body.append(list);
+  }
 }
 
 // One expandable proposal card: a clickable header (symbol/name + asset badge),
@@ -1206,21 +1400,131 @@ function renderPickActions(pick) {
   return actions;
 }
 
-async function loadLatestOpportunityContent() {
-  const bridge = window.OverseerBridge;
-  if (!bridge || !bridge.embedded) return null;
+// --- Recommendation runs (launch + observe) --------------------------------
+// Each "Find opportunities" is one detached pipeline run. Its record under
+// recommendation-run/<activityId> is what survives reloads, so the app can
+// re-attach to a run still working in the background.
+const RUN_TYPE = "recommendation-run";
+let observingProposalRun = false;
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function readRuns() {
+  if (!embedded()) return [];
   try {
-    const recs = await bridge.queryData({ type: "opportunity", key: "latest" });
+    const recs = await window.OverseerBridge.queryData({ type: RUN_TYPE });
+    return (recs || []).map((r) => r.content || {}).filter((r) => r.runId);
+  } catch {
+    return [];
+  }
+}
+
+async function saveRun(run) {
+  try {
+    await window.OverseerBridge.putData({
+      type: RUN_TYPE,
+      key: run.runId,
+      content: run,
+    });
+  } catch {
+    // best-effort
+  }
+}
+
+async function patchRun(runId, patch) {
+  const run = (await readRuns()).find((r) => r.runId === runId);
+  if (run) await saveRun({ ...run, ...patch });
+}
+
+// Recommendation results + progress are RUN-SCOPED (keyed by the activity id),
+// written by the pipeline activity as it works.
+async function readRecommendations(runId) {
+  if (!runId) return null;
+  try {
+    const recs = await window.OverseerBridge.queryData({
+      type: "catalog-fin-product-recommendations",
+      key: runId,
+    });
     return (recs && recs[0] && recs[0].content) || null;
   } catch {
     return null;
   }
 }
 
+async function readProposalProgress(runId) {
+  if (!runId) return null;
+  try {
+    const recs = await window.OverseerBridge.queryData({
+      type: "catalog-fin-product-progress",
+      key: runId,
+    });
+    return (recs && recs[0] && recs[0].content) || null;
+  } catch {
+    return null;
+  }
+}
+
+// Look up one activity from the project's list (or null). Returns the run
+// object ({ status, isLive, … }) so the observer can tell a live run from one
+// orphaned by a server restart.
+async function getProposalActivity(activityId) {
+  try {
+    const res = await window.OverseerBridge.listActivities();
+    return (
+      ((res && res.activities) || []).find(
+        (a) => a.activityId === activityId,
+      ) || null
+    );
+  } catch {
+    return null;
+  }
+}
+
+// A running catalog activity that no saved run record covers yet — the launch
+// went through server-side but the bridge reply was lost (e.g. startActivity
+// timed out), so the run can be adopted instead of reported as a failure.
+async function findLaunchedProposalActivity() {
+  try {
+    const res = await window.OverseerBridge.listActivities();
+    const known = new Set((await readRuns()).map((r) => r.runId));
+    return (
+      ((res && res.activities) || []).find(
+        (a) =>
+          a.status === "running" &&
+          a.recordType === "catalog-fin-product" &&
+          !known.has(a.activityId),
+      ) || null
+    );
+  } catch {
+    return null;
+  }
+}
+
+// The newest finished run's ranked products, mapped to the pick shape the
+// proposal cards (and the Home advisor digest) consume.
+async function loadLatestProposalsContent() {
+  if (!embedded()) return null;
+  const runs = (await readRuns()).sort((a, b) =>
+    String(b.createdAt).localeCompare(String(a.createdAt)),
+  );
+  for (const run of runs) {
+    const recs = await readRecommendations(run.runId);
+    if (recs && Array.isArray(recs.products) && recs.products.length) {
+      return { items: recs.products.map(productToPick), market: run.market };
+    }
+  }
+  return null;
+}
+
 async function loadLatestOpportunities() {
-  const content = await loadLatestOpportunityContent();
-  if (content === null) return null;
-  return Array.isArray(content.items) ? content.items : [];
+  const content = await loadLatestProposalsContent();
+  return content ? content.items : null;
 }
 
 async function setupProposals(staticPicks) {
@@ -1263,64 +1567,182 @@ async function setupProposals(staticPicks) {
     return;
   }
 
-  const existing = await loadLatestOpportunities();
-  renderTopPicks(existing && existing.length ? existing : staticPicks);
+  await refreshProposalsFromStore();
 
   btn.addEventListener("click", findProposals);
 }
 
-// Run the opportunities job, then re-read `opportunity/latest` and render it.
-// Shared by the Proposals "Find" button and the Start onboarding wizard, so it
-// drives its own button/status state and never throws to the caller.
+// The Proposals tab's working state: the Find button + the per-tab spinner.
+let findButtonLabel = "";
+function setProposalsWorking(working) {
+  const btn = document.getElementById("find-opportunities");
+  if (btn) {
+    if (!findButtonLabel) findButtonLabel = btn.textContent;
+    btn.disabled = working;
+    btn.textContent = working ? "Finding…" : findButtonLabel;
+    btn.classList.toggle("is-loading", working);
+  }
+  setTabBusy("proposals", working);
+}
+
+// Start a NEW recommendation run: a detached gather→rank pipeline activity over
+// the financial-products catalog. It returns immediately; observeProposalRun()
+// follows the run's records until it settles. Shared by the Proposals "Find"
+// button and the Start onboarding wizard, so it drives its own button/status
+// state and never throws to the caller.
 async function findProposals() {
   const bridge = window.OverseerBridge;
   if (!bridge || !bridge.embedded) return;
-  const btn = document.getElementById("find-opportunities");
   const status = document.getElementById("opportunities-status");
-  const original = btn ? btn.textContent : "";
-  const before = await loadLatestOpportunityContent();
-  const beforeAt = before && before.generatedAt;
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = "Finding…";
-    btn.classList.add("is-loading");
-  }
-  if (status)
-    status.textContent =
-      "Searching the web and analysing — this can take a minute or two…";
-  setTabBusy("proposals", true);
-
-  let runError;
-  try {
-    await bridge.runJob("opportunities");
-  } catch (err) {
-    runError = err;
-  }
-  // Re-read regardless: the backend writes `opportunity/latest` even if the
-  // bridge call timed out, so a slow-but-completed run still shows its result.
-  const content = await loadLatestOpportunityContent();
-  const produced =
-    content && content.generatedAt && content.generatedAt !== beforeAt;
-
-  if (btn) {
-    btn.disabled = false;
-    btn.textContent = original;
-    btn.classList.remove("is-loading");
-  }
-  setTabBusy("proposals", false);
-  if (produced) {
-    const items = Array.isArray(content.items) ? content.items : [];
-    renderTopPicks(items);
-    setTabUnread("proposals", items.length);
+  if (observingProposalRun) {
     if (status)
-      status.textContent = items.length
-        ? ""
-        : "No opportunities found — try adjusting your profile.";
-  } else if (runError) {
-    if (status) status.textContent = analysisErrorText(runError);
-  } else if (status) {
-    status.textContent = "Couldn't get opportunities just now — try again.";
+      status.textContent =
+        "A search is already running — when it finishes, press Find to search with your new answers.";
+    return;
   }
+  const { market, language } = localeMarket();
+  const profile = appProfile || {};
+  setProposalsWorking(true);
+  if (status) status.textContent = "Gathering products…";
+  let activityId;
+  let launchError;
+  try {
+    const started = await bridge.startActivity("pipeline", {
+      steps: [{ kind: "gather" }, { kind: "rank" }],
+      spec: buildFinCatalogSpec(language),
+      market,
+      searchQuery: buildFinSearchQuery(profile),
+      filters: buildFinFilters(profile),
+      rankInstructions: buildFinRankInstructions(profile),
+    });
+    activityId = started && started.activityId;
+  } catch (err) {
+    const adopted = await findLaunchedProposalActivity();
+    activityId = adopted && adopted.activityId;
+    if (!activityId) launchError = err;
+  }
+  if (!activityId) {
+    setProposalsWorking(false);
+    const message =
+      launchError && typeof launchError.message === "string"
+        ? launchError.message.trim()
+        : "";
+    if (status)
+      status.textContent =
+        message || "Could not start the search — please try again.";
+    return;
+  }
+  await saveRun({
+    runId: activityId,
+    createdAt: nowIso(),
+    status: "running",
+    market,
+  });
+  observeProposalRun(activityId);
+}
+
+// Follow one run until it settles: poll the activity's status + its run-scoped
+// progress record, re-launching it once if the server orphaned it (a restart).
+// A run still absent for several polls after that one retry is unrecoverable
+// and gets marked failed; a live-but-slow run gives up after 15 minutes — its
+// record stays 'running' so the next app load re-attaches via
+// resumeProposalRun().
+async function observeProposalRun(runId) {
+  if (observingProposalRun) return;
+  observingProposalRun = true;
+  const status = document.getElementById("opportunities-status");
+  const start = Date.now();
+  const MAX_WAIT_MS = 900000;
+  const MAX_ORPHAN_POLLS = 3;
+  let resumeTries = 0;
+  let orphanPolls = 0;
+  try {
+    while (Date.now() - start < MAX_WAIT_MS) {
+      const act = await getProposalActivity(runId);
+      if (act && act.status && act.status !== "running") {
+        await finalizeProposalRun(runId, act.status);
+        return;
+      }
+      // Orphaned (server restarted): if a result already landed, finish; else
+      // re-launch it once now that the app is open.
+      if (!act || act.isLive === false) {
+        const recs = await readRecommendations(runId);
+        if (recs && recs.products) {
+          await finalizeProposalRun(runId, "completed");
+          return;
+        }
+        if (resumeTries < 1) {
+          resumeTries += 1;
+          try {
+            await window.OverseerBridge.resumeActivity(runId);
+          } catch {
+            // keep observing; the record may settle on its own
+          }
+        } else {
+          orphanPolls += 1;
+          if (orphanPolls >= MAX_ORPHAN_POLLS) {
+            await finalizeProposalRun(runId, "failed");
+            return;
+          }
+        }
+      } else {
+        orphanPolls = 0;
+      }
+      if (status) {
+        const p = await readProposalProgress(runId);
+        const gathering =
+          !p || !p.suppliersTotal || p.suppliersDone < p.suppliersTotal;
+        status.textContent = gathering
+          ? "Gathering products…"
+          : "Matching to your profile…";
+      }
+      await sleep(3000);
+    }
+    setProposalsWorking(false);
+    if (status)
+      status.textContent =
+        "Still working in the background — check back in a while.";
+  } finally {
+    observingProposalRun = false;
+  }
+}
+
+// The run settled: stamp its record, then render the ranked products (or an
+// empty/error message) through the proposal cards.
+async function finalizeProposalRun(runId, settledStatus) {
+  const recs = await readRecommendations(runId);
+  const products = recs && Array.isArray(recs.products) ? recs.products : [];
+  await patchRun(runId, {
+    status: settledStatus === "running" ? "completed" : settledStatus,
+    finishedAt: nowIso(),
+    productCount: products.length,
+  });
+  setProposalsWorking(false);
+  const status = document.getElementById("opportunities-status");
+  if (products.length) {
+    renderRankedPicks(products.map(productToPick));
+    setTabUnread("proposals", products.length);
+    if (status) status.textContent = "";
+  } else if (settledStatus === "completed") {
+    renderTopPicks([]);
+    if (status)
+      status.textContent = "No products matched your profile — try widening it.";
+  } else if (status) {
+    status.textContent = "That search did not finish — please try again.";
+  }
+}
+
+// On load, re-attach to the most recent run still marked running (the detached
+// activity survives navigation and reloads server-side).
+async function resumeProposalRun() {
+  if (!embedded()) return;
+  const runs = (await readRuns()).filter((r) => r.status === "running");
+  if (!runs.length) return;
+  runs.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  setProposalsWorking(true);
+  const status = document.getElementById("opportunities-status");
+  if (status) status.textContent = "Resuming your product search…";
+  observeProposalRun(runs[0].runId);
 }
 
 // --- Home (daily digest + advisor) ----------------------------------------
@@ -2865,6 +3287,8 @@ async function init() {
     // Now the initial showTab fires with both setup wired and data loaded.
     setupTabs();
     setupSettings();
+    // Not awaited — it observes a still-running search until it settles.
+    resumeProposalRun();
     await refreshLive();
     setInterval(() => {
       refreshLive().catch(() => {});
