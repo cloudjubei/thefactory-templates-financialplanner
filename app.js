@@ -1119,18 +1119,20 @@ function buildFinCatalogSpec(language) {
       "Extract every savings or investment product {supplier} currently offers to retail investors in {market}, with rates, fees and minimums." +
       langNote +
       ' Each item is a JSON object: { "name": string, "provider": string, ' +
+      '"summary": string, "description": string, ' +
       '"productType": EXACTLY one lowercase value of savings|isa|bond|fund|etf|stock|crypto|pension, ' +
       '"expectedReturnPct": number, "returnType": EXACTLY one lowercase value of fixed|variable|historical, ' +
       '"riskLevel": EXACTLY one lowercase value of low|medium|high, "minInvestment": number, ' +
       '"feesPct": number, "liquidity": EXACTLY one lowercase value of instant|notice|fixed-term, ' +
       '"termMonths": number, "url": string }. ' +
-      "name is the official product name and provider is {supplier}. productType, returnType, riskLevel and liquidity MUST be lowercase English enums (exactly the values listed). " +
+      "name is the official product name and provider is {supplier}. summary is one buyer-facing sentence; description is a short paragraph (2-4 sentences) covering who the product suits, its risk/return character, and standout traits — these power search, so make them genuinely descriptive. " +
+      "productType, returnType, riskLevel and liquidity MUST be lowercase English enums (exactly the values listed). " +
       "expectedReturnPct is the advertised or historical annual return as a number like 4.5; returnType says whether that figure is fixed, variable, or a historical average. " +
       "minInvestment MUST be a plain integer in the local currency with NO symbols, commas, or quotes. feesPct is the total annual fee as a number like 0.25. " +
       "termMonths is an integer count of months for fixed-term products — OMIT it when the product is open-ended. " +
       "url is the official {supplier} page for this product in {market}, copied EXACTLY from the sources — never invent or guess a URL. " +
       "Omit any field you cannot determine from the sources rather than guessing. " +
-      'Example: { "name": "1 Year Fixed Rate Saver", "provider": "Example Bank", "productType": "savings", "expectedReturnPct": 4.3, "returnType": "fixed", "riskLevel": "low", "minInvestment": 1000, "feesPct": 0, "liquidity": "fixed-term", "termMonths": 12, "url": "https://www.examplebank.example/fixed-saver" }. ' +
+      'Example: { "name": "1 Year Fixed Rate Saver", "provider": "Example Bank", "summary": "A low-risk fixed-term savings bond with a guaranteed rate.", "description": "Suits cautious savers who can lock money away for a year in exchange for a guaranteed return. No fees, capital is protected, but funds are inaccessible until maturity.", "productType": "savings", "expectedReturnPct": 4.3, "returnType": "fixed", "riskLevel": "low", "minInvestment": 1000, "feesPct": 0, "liquidity": "fixed-term", "termMonths": 12, "url": "https://www.examplebank.example/fixed-saver" }. ' +
       "Return ONLY a JSON array, no prose or code fences.",
   };
 }
