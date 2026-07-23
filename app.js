@@ -673,9 +673,10 @@ async function runAssetInfo(asset) {
   if (ongoingAssetInfo.has(id)) return;
   ongoingAssetInfo.add(id);
   try {
-    await bridge.runJob("asset-info", { asset });
+    const started = await bridge.startActivity("asset-info", { asset });
+    await observeJobActivity(started && started.activityId);
   } catch {
-    // The backend writes the record even if the bridge timed out; re-read.
+    // The backend writes the record even if the launch/observe failed; re-read.
   } finally {
     ongoingAssetInfo.delete(id);
   }
@@ -1649,6 +1650,76 @@ async function findProposals() {
 // and gets marked failed; a live-but-slow run gives up after 15 minutes — its
 // record stays 'running' so the next app load re-attaches via
 // resumeProposalRun().
+// Declare to the host which record types this app owns and which background activities it may launch,
+// so the project chat's generic tools can read them and (with approval) launch a refresh. Best-effort —
+// the app's own buttons launch via startActivity regardless (the backend ships built-in definitions for
+// each type). Replaces the pre-migration reliance on the analysis-job route.
+async function reportAppCapabilities() {
+  const bridge = window.OverseerBridge;
+  if (!bridge || !bridge.embedded || !bridge.reportCapabilities) return;
+  try {
+    await bridge.reportCapabilities({
+      // The finance research passes (advisor/investigate/news/asset-info/opportunities) run web search +
+      // an LLM, so they need an API config — declare API-only by default. The `pipeline` catalog build is
+      // the exception: it can run on a more capable CLI agent, so allow-list it for CLI.
+      activitiesApiOnly: true,
+      cliActivities: ["pipeline"],
+      data: {
+        types: [
+          { type: "opportunity", label: "Investment opportunities" },
+          { type: "advice", label: "Advisor actions" },
+          { type: "investigation", label: "Product deep-dive" },
+          { type: "news", label: "Asset news" },
+          { type: "asset-info", label: "Asset description" },
+        ],
+        activities: [
+          "pipeline",
+          "opportunities",
+          "advisor",
+          "investigate",
+          "news",
+          "asset-info",
+        ],
+      },
+    });
+  } catch {
+    // non-fatal — capabilities are an enhancement for the project chat tools
+  }
+}
+
+// Wait for a one-shot research activity (asset-info / advisor / investigate / news) to settle. The
+// backend keeps running it even if this app is closed, and writes its record regardless — so callers
+// re-read the record after this resolves (a lost/timed-out observe is not fatal). Mirrors the proposal
+// observer but single-step: poll listActivities until the run leaves running/queued, resuming once if a
+// server restart orphaned it.
+async function observeJobActivity(activityId) {
+  if (!activityId) return;
+  const start = Date.now();
+  const MAX_WAIT_MS = 300000;
+  let resumeTries = 0;
+  while (Date.now() - start < MAX_WAIT_MS) {
+    let act = null;
+    try {
+      const res = await window.OverseerBridge.listActivities();
+      act =
+        ((res && res.activities) || []).find((a) => a.activityId === activityId) || null;
+    } catch {
+      // transient — keep polling
+    }
+    if (act && act.status && act.status !== "running" && act.status !== "queued") return;
+    // Orphaned by a server restart (still 'running' but not live): re-launch it once.
+    if (act && act.isLive === false && act.status === "running" && resumeTries < 1) {
+      resumeTries += 1;
+      try {
+        await window.OverseerBridge.resumeActivity(activityId);
+      } catch {
+        // keep observing; the record may settle on its own
+      }
+    }
+    await sleep(2500);
+  }
+}
+
 async function observeProposalRun(runId) {
   if (observingProposalRun) return;
   observingProposalRun = true;
@@ -1903,9 +1974,10 @@ async function refreshAdvice() {
   let runError;
   try {
     const opportunityItems = (await loadLatestOpportunities()) || [];
-    await bridge.runJob("advisor", {
+    const started = await bridge.startActivity("advisor", {
       latestOpportunity: { items: opportunityItems },
     });
+    await observeJobActivity(started && started.activityId);
   } catch (err) {
     runError = err;
   }
@@ -2186,9 +2258,10 @@ async function runInvestigation(product) {
   renderInvestigations();
   updateInvestigateButtons();
   try {
-    await bridge.runJob("investigate", { product });
+    const started = await bridge.startActivity("investigate", { product });
+    await observeJobActivity(started && started.activityId);
   } catch {
-    // The backend writes the record even if the bridge call timed out; re-read.
+    // The backend writes the record even if the launch/observe failed; re-read.
   }
   ongoingInvestigations.delete(id);
   await refreshInvestigations();
@@ -2467,7 +2540,8 @@ async function runNewsRefresh(asset) {
   renderNews();
   let runError;
   try {
-    await bridge.runJob("news", { holding: asset });
+    const started = await bridge.startActivity("news", { holding: asset });
+    await observeJobActivity(started && started.activityId);
   } catch (err) {
     runError = err;
   }
@@ -3260,6 +3334,8 @@ async function init() {
   try {
     // Resolve the locale first so the very first currency paint is correct.
     await initSettings();
+    // Declare capabilities to the host (best-effort, not awaited — never blocks boot).
+    reportAppCapabilities();
     const profile = await loadProfile();
     onboarded = isOnboarded(profile);
     appProfile = profile;
