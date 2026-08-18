@@ -50,6 +50,70 @@ function projectSeries({ principal, monthly, annualReturnPct, years }) {
   };
 }
 
+// --- Probabilistic plan request (Forecast tab) ----------------------------
+// Assembles a FinancialPlanRequest for the host `plan` activity
+// (thefactory-financialtools). The block-bootstrap Monte-Carlo + doctrine
+// allocation run SERVER-SIDE; this only maps the app's simple inputs. The
+// deterministic band functions above stay for the Calculator + home digest.
+
+// The app's 3-way risk → a suitability profile: higher risk lifts the trend
+// sleeve appetite and enables the (haircut-gated) value+quality tilt.
+const RISK_TO_PLAN_PROFILE = {
+  cautious: { riskTolerance: "cautious", trendAppetite: 0.3, tiltAppetite: 0 },
+  balanced: { riskTolerance: "balanced", trendAppetite: 0.5, tiltAppetite: 0.5 },
+  adventurous: {
+    riskTolerance: "adventurous",
+    trendAppetite: 0.7,
+    tiltAppetite: 1,
+  },
+};
+
+// Doctrine default for the value+quality premium — haircut server-side
+// (publication decay ½ per McLean-Pontiff, then the tilt's incremental cost).
+// The allocator refuses the tilt if it doesn't survive positive.
+const PLAN_TILT_PREMIUM = {
+  rawAnnualPremium: 0.02,
+  publicationRetention: 0.5,
+  incrementalCost: 0.003,
+};
+
+function buildPlanRequest({
+  risk,
+  years,
+  initial,
+  monthly,
+  goalAmount,
+  sleeveReturns,
+  seed,
+}) {
+  const mapped =
+    RISK_TO_PLAN_PROFILE[risk] || RISK_TO_PLAN_PROFILE[FORECAST_DEFAULT_RISK];
+  const horizonYears = Math.max(1, Number(years) || FORECAST_DEFAULT_YEARS);
+  const request = {
+    profile: {
+      horizonYears,
+      riskTolerance: mapped.riskTolerance,
+      phase: "accumulation",
+      trendAppetite: mapped.trendAppetite,
+      tiltAppetite: mapped.tiltAppetite,
+    },
+    goal: {
+      targetAmount: Math.max(0, Number(goalAmount) || 0),
+      horizonYears,
+    },
+    contributions: {
+      initial: Math.max(0, Number(initial) || 0),
+      perPeriod: Math.max(0, Number(monthly) || 0),
+    },
+    sleeveReturns,
+    config: { blockSize: 12, paths: 500 },
+    periodsPerYear: 12,
+    tiltPremium: PLAN_TILT_PREMIUM,
+  };
+  if (typeof seed === "number") request.seed = seed;
+  return request;
+}
+
 // Three deterministic scenarios for the user's current portfolio, using the
 // per-risk return band.
 function buildForecast({ startingValue, monthly, years, risk }) {

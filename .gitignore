@@ -2,3 +2,7 @@
 node_modules/
 dist/
 *.log
+coverage/
+.coverage-v8/
+*.tsbuildinfo
+.env

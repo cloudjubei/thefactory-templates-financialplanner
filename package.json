@@ -1,0 +1,47 @@
+{
+  "name": "thefactory-financialtools",
+  "version": "0.1.0",
+  "description": "Long-term investing engines (honesty-spine haircuts, block-bootstrap Monte-Carlo projection, doctrine-driven allocation, end-to-end financial planning) plus the financial-planner display app.",
+  "license": "MIT",
+  "author": "Kamil Chmurzynski <cloudjubei@gmail.com>",
+  "private": false,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run clean && npm run build",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:cov": "vitest run --coverage --coverage.reportOnFailure",
+    "compile-check": "tsc --strict --noEmit --pretty false",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.1",
+    "@vitest/coverage-v8": "^1.6.0",
+    "prettier": "^3.6.2",
+    "typescript": "^5.5.4",
+    "vitest": "^1.6.0"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "sideEffects": false,
+  "keywords": [
+    "thefactory",
+    "financial-planning",
+    "investing",
+    "monte-carlo",
+    "asset-allocation",
+    "honesty-spine"
+  ]
+}

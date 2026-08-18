@@ -417,7 +417,8 @@
             <div class="card-head">
               <h2 id="forecast-h">Forecast</h2>
               <p class="card-sub">
-                Where your portfolio could grow, based on your risk profile.
+                Your outcome distribution and probability of reaching a goal — a
+                block-bootstrap Monte-Carlo simulation, not a single line.
               </p>
             </div>
 
@@ -456,6 +457,19 @@
                 />
               </label>
               <label class="field">
+                <span>Goal (target value)</span>
+                <span class="input-wrap">
+                  <span class="prefix currency-prefix">$</span>
+                  <input
+                    id="forecast-goal"
+                    type="number"
+                    min="0"
+                    step="1000"
+                    value="0"
+                  />
+                </span>
+              </label>
+              <label class="field">
                 <span>Risk</span>
                 <select id="forecast-risk">
                   <option value="cautious">Cautious</option>
@@ -463,39 +477,49 @@
                   <option value="adventurous">Adventurous</option>
                 </select>
               </label>
+              <button type="submit" id="forecast-run">Run forecast</button>
             </form>
 
-            <div class="stat-row forecast-scenarios">
-              <div class="stat">
-                <span class="stat-label"
-                  >Conservative <em id="forecast-rate-cons"></em
-                ></span>
-                <span id="forecast-cons" class="stat-value">—</span>
+            <p
+              id="forecast-status"
+              class="form-status"
+              role="status"
+              aria-live="polite"
+            ></p>
+
+            <div id="forecast-result" hidden>
+              <div class="stat-row">
+                <div class="stat stat-primary">
+                  <span class="stat-label">Probability of reaching goal</span>
+                  <span id="forecast-psuccess" class="stat-value">—</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-label">Median outcome</span>
+                  <span id="forecast-median" class="stat-value">—</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-label">Range (5–95%)</span>
+                  <span id="forecast-range" class="stat-value">—</span>
+                </div>
               </div>
-              <div class="stat stat-primary">
-                <span class="stat-label"
-                  >Expected <em id="forecast-rate-exp"></em
-                ></span>
-                <span id="forecast-exp" class="stat-value">—</span>
+
+              <div class="chart-wrap">
+                <canvas
+                  id="forecast-chart"
+                  aria-label="Projected portfolio value distribution over time — 5th to 95th percentile fan with the median"
+                ></canvas>
               </div>
-              <div class="stat">
-                <span class="stat-label"
-                  >Optimistic <em id="forecast-rate-opt"></em
-                ></span>
-                <span id="forecast-opt" class="stat-value stat-growth">—</span>
+
+              <div class="forecast-allocation">
+                <h3 class="forecast-subhead">Strategic allocation</h3>
+                <ul id="forecast-sleeves" class="forecast-sleeves"></ul>
               </div>
+
+              <ul id="forecast-caveats" class="forecast-caveats"></ul>
             </div>
 
-            <div class="chart-wrap">
-              <canvas
-                id="forecast-chart"
-                aria-label="Projected portfolio value over time across conservative, expected and optimistic scenarios"
-              ></canvas>
-            </div>
-
-            <p class="forecast-note">
-              Deterministic estimates from fixed per-risk return assumptions —
-              not financial advice.
+            <p class="forecast-note" id="forecast-data-note">
+              Probabilistic simulation — not financial advice.
             </p>
           </section>
         </section>

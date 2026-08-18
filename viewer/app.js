@@ -96,13 +96,6 @@ function formatTimestamp(value) {
   if (lib && appSettings) return lib.formatDateTime(value, appSettings);
   return String(value);
 }
-// A return-rate percent (no +/− sign) in the active locale.
-function formatRatePct(value) {
-  const lib = locale();
-  if (lib && appSettings)
-    return lib.formatPercent(value, appSettings, { signed: false });
-  return `${value}%`;
-}
 
 async function loadJson(path) {
   const res = await fetch(path);
@@ -1663,7 +1656,9 @@ async function reportAppCapabilities() {
       // an LLM, so they need an API config — declare API-only by default. The `pipeline` catalog build is
       // the exception: it can run on a more capable CLI agent, so allow-list it for CLI.
       activitiesApiOnly: true,
-      cliActivities: ["pipeline"],
+      // `plan` is deterministic (no LLM), but allow-list it for CLI too so it is
+      // never gated by the API-only default.
+      cliActivities: ["pipeline", "plan"],
       data: {
         types: [
           { type: "opportunity", label: "Investment opportunities" },
@@ -1671,6 +1666,7 @@ async function reportAppCapabilities() {
           { type: "investigation", label: "Product deep-dive" },
           { type: "news", label: "Asset news" },
           { type: "asset-info", label: "Asset description" },
+          { type: "forecast-plan", label: "Financial plan / forecast" },
         ],
         activities: [
           "pipeline",
@@ -1679,6 +1675,7 @@ async function reportAppCapabilities() {
           "investigate",
           "news",
           "asset-info",
+          "plan",
         ],
       },
     });
@@ -2835,40 +2832,121 @@ function renderCalculator() {
   }
 }
 
-// --- Forecast -------------------------------------------------------------
+// --- Forecast (probabilistic) ---------------------------------------------
+// The Forecast tab launches the host `plan` activity (thefactory-financialtools):
+// a block-bootstrap Monte-Carlo over per-sleeve return history + a doctrine
+// allocation, scored against a goal. The heavy math runs server-side; here we
+// assemble inputs, observe the run, read its record, and render the fan.
 let forecastChart;
+let forecastData = null; // the loaded sleeve-returns fixture (returns + note)
+let lastPlan = null; // last FinancialPlan rendered (re-render on currency change)
+let observingForecastRun = false;
 
-const FORECAST_LINES = [
-  { key: "optimistic", label: "Optimistic", color: "#16a34a", width: 1.5 },
-  { key: "expected", label: "Expected", color: "#2563eb", width: 2.5 },
-  { key: "conservative", label: "Conservative", color: "#6b7280", width: 1.5 },
-];
+const FORECAST_RECORD_TYPE = "forecast";
 
-function renderForecastChart(forecast) {
+const SLEEVE_LABELS = {
+  globalEquityCore: "Global equity core",
+  valueQualityTilt: "Value + quality tilt",
+  trendFollowing: "Trend-following",
+  shortDurationBonds: "Short-duration bonds",
+};
+
+async function loadForecastData() {
+  if (forecastData) return forecastData;
+  try {
+    forecastData = await loadJson("./data/sleeve-returns.json");
+  } catch {
+    forecastData = null;
+  }
+  return forecastData;
+}
+
+async function readPlan(runId) {
+  if (!runId) return null;
+  try {
+    const recs = await window.OverseerBridge.queryData({
+      type: FORECAST_RECORD_TYPE + "-plan",
+      key: runId,
+    });
+    return (recs && recs[0] && recs[0].content) || null;
+  } catch {
+    return null;
+  }
+}
+
+function setForecastRunning(on) {
+  const btn = document.getElementById("forecast-run");
+  if (btn) {
+    btn.disabled = on;
+    btn.classList.toggle("is-loading", on);
+  }
+}
+
+// Keep only whole-year points so the fan chart stays readable.
+function yearlyFanPoints(fan, periodsPerYear) {
+  return (fan || []).filter((p) => p.period % periodsPerYear === 0);
+}
+
+function renderForecastFan(plan) {
   const canvas = document.getElementById("forecast-chart");
-  if (!window.Chart || !canvas) return;
-  const labels = forecast.expected.labels;
-  const series = FORECAST_LINES.map((line) => forecast[line.key].balances);
+  if (!window.Chart || !canvas || !plan || !plan.projection) return;
+  const ppy = 12;
+  const pts = yearlyFanPoints(plan.projection.fan, ppy);
+  const labels = pts.map((p) => `${Math.round(p.period / ppy)}y`);
+  const band = (k) => pts.map((p) => p.quantiles[k]);
+  // A fan via stacked fills: p5 is the invisible base, each higher percentile
+  // fills down to the previous one; the median is a solid line on top.
+  const datasets = [
+    {
+      label: "5th",
+      data: band("p5"),
+      borderColor: "transparent",
+      pointRadius: 0,
+      fill: false,
+    },
+    {
+      label: "5–25%",
+      data: band("p25"),
+      borderColor: "transparent",
+      backgroundColor: "rgba(37,99,235,0.10)",
+      pointRadius: 0,
+      fill: "-1",
+    },
+    {
+      label: "25–75%",
+      data: band("p75"),
+      borderColor: "transparent",
+      backgroundColor: "rgba(37,99,235,0.20)",
+      pointRadius: 0,
+      fill: "-1",
+    },
+    {
+      label: "75–95%",
+      data: band("p95"),
+      borderColor: "transparent",
+      backgroundColor: "rgba(37,99,235,0.10)",
+      pointRadius: 0,
+      fill: "-1",
+    },
+    {
+      label: "Median",
+      data: band("p50"),
+      borderColor: "#2563eb",
+      borderWidth: 2.5,
+      pointRadius: 0,
+      tension: 0.2,
+      fill: false,
+    },
+  ];
   if (forecastChart) {
     forecastChart.data.labels = labels;
-    forecastChart.data.datasets.forEach((ds, i) => (ds.data = series[i]));
+    forecastChart.data.datasets = datasets;
     forecastChart.update();
     return;
   }
   forecastChart = new window.Chart(canvas.getContext("2d"), {
     type: "line",
-    data: {
-      labels,
-      datasets: FORECAST_LINES.map((line, i) => ({
-        label: line.label,
-        data: series[i],
-        borderColor: line.color,
-        backgroundColor: "transparent",
-        borderWidth: line.width,
-        tension: 0.25,
-        pointRadius: 0,
-      })),
-    },
+    data: { labels, datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -2881,8 +2959,7 @@ function renderForecastChart(forecast) {
         },
         tooltip: {
           callbacks: {
-            label: (ctx) =>
-              `${ctx.dataset.label}: ${formatMoney(ctx.parsed.y)}`,
+            label: (ctx) => `${ctx.dataset.label}: ${formatMoney(ctx.parsed.y)}`,
           },
         },
       },
@@ -2891,66 +2968,164 @@ function renderForecastChart(forecast) {
   });
 }
 
+function renderForecastResult(plan) {
+  const result = document.getElementById("forecast-result");
+  if (!plan || !plan.projection) {
+    if (result) result.hidden = true;
+    return;
+  }
+  if (result) result.hidden = false;
+  const proj = plan.projection;
+  const pEl = document.getElementById("forecast-psuccess");
+  if (pEl) {
+    pEl.textContent =
+      typeof proj.probabilityOfSuccess === "number"
+        ? `${Math.round(proj.probabilityOfSuccess * 100)}%`
+        : "—";
+  }
+  const term = proj.terminal || {};
+  document.getElementById("forecast-median").textContent = formatMoney(term.p50);
+  document.getElementById("forecast-range").textContent =
+    `${formatMoney(term.p5)} – ${formatMoney(term.p95)}`;
+
+  const sleevesEl = document.getElementById("forecast-sleeves");
+  if (sleevesEl) {
+    const sleeves = (plan.allocation && plan.allocation.sleeves) || [];
+    sleevesEl.innerHTML = sleeves
+      .filter((s) => s.weight > 0.0005)
+      .map(
+        (s) =>
+          `<li><span class="sleeve-name">${escapeHtml(
+            SLEEVE_LABELS[s.sleeve] || s.sleeve,
+          )}</span><span class="sleeve-weight">${Math.round(
+            s.weight * 100,
+          )}%</span></li>`,
+      )
+      .join("");
+  }
+
+  const caveatsEl = document.getElementById("forecast-caveats");
+  if (caveatsEl) {
+    caveatsEl.innerHTML = (plan.caveats || [])
+      .map((c) => `<li>${escapeHtml(c)}</li>`)
+      .join("");
+  }
+
+  renderForecastFan(plan);
+}
+
+async function runPlanForecast() {
+  const bridge = window.OverseerBridge;
+  const status = document.getElementById("forecast-status");
+  if (!bridge || !bridge.embedded) {
+    if (status)
+      status.textContent =
+        "Open this app inside Overseer to run the probabilistic forecast.";
+    return;
+  }
+  if (observingForecastRun) {
+    if (status) status.textContent = "A forecast is already running…";
+    return;
+  }
+  const data = await loadForecastData();
+  const sleeveReturns = data && data.returns;
+  if (!sleeveReturns) {
+    if (status) status.textContent = "Could not load return data.";
+    return;
+  }
+
+  const request = buildPlanRequest({
+    risk: document.getElementById("forecast-risk").value,
+    years: document.getElementById("forecast-years").value,
+    initial: portfolioCurrentValue,
+    monthly: Number(document.getElementById("forecast-monthly").value) || 0,
+    goalAmount: Number(document.getElementById("forecast-goal").value) || 0,
+    sleeveReturns,
+    seed: 1,
+  });
+
+  observingForecastRun = true;
+  setForecastRunning(true);
+  if (status) status.textContent = "Running simulation…";
+  let activityId;
+  try {
+    const started = await bridge.startActivity("plan", {
+      recordType: FORECAST_RECORD_TYPE,
+      request,
+    });
+    activityId = started && started.activityId;
+  } catch (err) {
+    if (status)
+      status.textContent =
+        (err && err.message) || "Could not start the forecast.";
+    observingForecastRun = false;
+    setForecastRunning(false);
+    return;
+  }
+  if (!activityId) {
+    if (status) status.textContent = "Could not start the forecast.";
+    observingForecastRun = false;
+    setForecastRunning(false);
+    return;
+  }
+  try {
+    await observeJobActivity(activityId);
+    const plan = await readPlan(activityId);
+    if (plan) {
+      lastPlan = plan;
+      renderForecastResult(plan);
+      if (status) status.textContent = "";
+    } else {
+      status.textContent = "The forecast finished but no result was found.";
+    }
+  } finally {
+    observingForecastRun = false;
+    setForecastRunning(false);
+  }
+}
+
 function setupForecast(profile) {
   const form = document.getElementById("forecast-form");
   const monthlyEl = document.getElementById("forecast-monthly");
   const yearsEl = document.getElementById("forecast-years");
   const riskEl = document.getElementById("forecast-risk");
+  if (!form) return;
 
-  riskEl.value = RISK_RETURN_BANDS[profile.risk]
+  riskEl.value = RISK_TO_PLAN_PROFILE[profile.risk]
     ? profile.risk
     : FORECAST_DEFAULT_RISK;
   yearsEl.value = FORECAST_DEFAULT_YEARS;
-  // Default the monthly contribution from the onboarding profile when set.
   if (typeof profile.monthlyContribution === "number") {
     monthlyEl.value = profile.monthlyContribution;
   }
 
-  function recalc() {
-    const startingValue = portfolioCurrentValue;
-    const monthly = Number(monthlyEl.value) || 0;
-    const years = Math.max(1, Number(yearsEl.value) || 1);
-    const forecast = buildForecast({
-      startingValue,
-      monthly,
-      years,
-      risk: riskEl.value,
-    });
+  const startEl = document.getElementById("forecast-start");
+  if (startEl) startEl.textContent = formatMoney(portfolioCurrentValue);
+  const hint = document.getElementById("forecast-empty-hint");
+  if (hint) hint.hidden = portfolioCurrentValue > 0;
 
-    document.getElementById("forecast-start").textContent =
-      formatMoney(startingValue);
-    const hint = document.getElementById("forecast-empty-hint");
-    if (hint) hint.hidden = startingValue > 0;
+  // Surface the fixture's illustrative-data caveat honestly in the note.
+  loadForecastData().then((data) => {
+    const noteEl = document.getElementById("forecast-data-note");
+    if (noteEl && data && data._note) {
+      noteEl.textContent =
+        "Probabilistic simulation — not financial advice. " + data._note;
+    }
+  });
 
-    document.getElementById("forecast-cons").textContent = formatMoney(
-      forecast.conservative.finalValue,
-    );
-    document.getElementById("forecast-exp").textContent = formatMoney(
-      forecast.expected.finalValue,
-    );
-    document.getElementById("forecast-opt").textContent = formatMoney(
-      forecast.optimistic.finalValue,
-    );
-    document.getElementById("forecast-rate-cons").textContent = formatRatePct(
-      forecast.band.conservative,
-    );
-    document.getElementById("forecast-rate-exp").textContent = formatRatePct(
-      forecast.band.expected,
-    );
-    document.getElementById("forecast-rate-opt").textContent = formatRatePct(
-      forecast.band.optimistic,
-    );
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    runPlanForecast();
+  });
 
-    renderForecastChart(forecast);
-  }
-
-  recalcForecast = recalc;
-  form.addEventListener("input", recalc);
-  recalc();
-  if (!window.Chart) {
-    const tick = () => (window.Chart ? recalc() : setTimeout(tick, 50));
-    tick();
-  }
+  // Currency changes only re-render the display of the last result + start value.
+  recalcForecast = () => {
+    const s = document.getElementById("forecast-start");
+    if (s) s.textContent = formatMoney(portfolioCurrentValue);
+    const h = document.getElementById("forecast-empty-hint");
+    if (h) h.hidden = portfolioCurrentValue > 0;
+    if (lastPlan) renderForecastResult(lastPlan);
+  };
 }
 
 // --- Currency-driven UI ---------------------------------------------------
