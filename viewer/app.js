@@ -290,10 +290,191 @@ function createHoldingsStore() {
 
 const holdingsStore = createHoldingsStore();
 
+// --- Watchlist persistence ------------------------------------------------
+// Things the user is keeping an eye on (saved from proposals) — no money
+// committed. Mirrors the holdings store: bridge-backed when embedded, else
+// localStorage.
+const WATCHLIST_TYPE = "watchlist-item";
+const WATCHLIST_LOCAL_KEY = "planner.watchlist.v1";
+
+// Stable identity for a watched item: symbol when present, else provider+name.
+function watchlistKey(item) {
+  const ident = item.symbol
+    ? normalizeSymbol(item.symbol)
+    : slugify([item.provider, item.name].filter(Boolean).join(" "));
+  return `${item.assetClass || "other"}:${ident}`;
+}
+
+function createWatchlistStore() {
+  const bridge = window.OverseerBridge;
+  if (bridge && bridge.embedded) {
+    return {
+      async list() {
+        const records = await bridge.queryData({ type: WATCHLIST_TYPE });
+        return records.map((r) => r.content);
+      },
+      put: (item) =>
+        bridge.putData({
+          type: WATCHLIST_TYPE,
+          key: watchlistKey(item),
+          content: item,
+        }),
+      remove: (key) => bridge.deleteData({ type: WATCHLIST_TYPE, key }),
+    };
+  }
+  const read = () => {
+    try {
+      return JSON.parse(localStorage.getItem(WATCHLIST_LOCAL_KEY)) || [];
+    } catch {
+      return [];
+    }
+  };
+  const write = (arr) =>
+    localStorage.setItem(WATCHLIST_LOCAL_KEY, JSON.stringify(arr));
+  return {
+    async list() {
+      return read();
+    },
+    async put(item) {
+      const key = watchlistKey(item);
+      write([...read().filter((x) => watchlistKey(x) !== key), item]);
+    },
+    async remove(key) {
+      write(read().filter((x) => watchlistKey(x) !== key));
+    },
+  };
+}
+
+const watchlistStore = createWatchlistStore();
+
+function pickToWatchlistItem(pick) {
+  return {
+    name: pick.name || pick.symbol || "",
+    assetClass: pick.assetClass || "other",
+    symbol: pick.symbol || undefined,
+    provider: pick.provider || undefined,
+    url: pick.url || undefined,
+    rationale: pick.rationale || "",
+    addedAt: nowIso(),
+    source: "proposal",
+  };
+}
+
+async function addToWatchlist(pick, button) {
+  try {
+    await watchlistStore.put(pickToWatchlistItem(pick));
+    if (button) {
+      button.textContent = "Saved ✓";
+      button.disabled = true;
+    }
+    if (activeTabId === "watchlist") refreshWatchlist();
+  } catch {
+    if (button) button.textContent = "Save failed";
+  }
+}
+
+async function refreshWatchlist() {
+  try {
+    renderWatchlist(await watchlistStore.list());
+  } catch {
+    renderWatchlist([]);
+  }
+}
+
+function renderWatchlist(items) {
+  const body = document.getElementById("watchlist-body");
+  if (!body) return;
+  if (!Array.isArray(items) || items.length === 0) {
+    body.className = "top-picks-empty";
+    body.innerHTML = `
+      <p class="empty-emoji" aria-hidden="true">👀</p>
+      <p>Save proposals you like here from the Proposals tab.</p>
+    `;
+    return;
+  }
+  body.className = "";
+  body.innerHTML = "";
+  const list = document.createElement("ul");
+  list.className = "top-picks-list";
+  for (const item of items) list.append(renderWatchlistCard(item));
+  body.append(list);
+}
+
+function renderWatchlistCard(item) {
+  const li = document.createElement("li");
+  li.className = "pick watch-item";
+  const head = document.createElement("div");
+  head.className = "watch-head";
+  const sym = document.createElement("span");
+  sym.className = "pick-symbol";
+  sym.textContent = item.name || item.symbol || "";
+  head.append(sym);
+  if (item.assetClass) {
+    const badge = document.createElement("span");
+    badge.className = `asset-badge asset-${item.assetClass}`;
+    badge.textContent =
+      ASSET_CLASS_LABEL.get(item.assetClass) || item.assetClass;
+    head.append(badge);
+  }
+  li.append(head);
+  if (item.rationale) {
+    const reason = document.createElement("div");
+    reason.className = "pick-reason";
+    reason.textContent = item.rationale;
+    li.append(reason);
+  }
+  const where = [item.provider, item.url].filter(Boolean).join(" — ");
+  if (where) {
+    const w = document.createElement("div");
+    w.className = "pick-where";
+    w.textContent = `Where: ${where}`;
+    li.append(w);
+  }
+  const actions = document.createElement("div");
+  actions.className = "pick-actions";
+  const buy = document.createElement("button");
+  buy.type = "button";
+  buy.className = "pick-buy";
+  buy.textContent = "I bought this";
+  buy.dataset.name = item.name || item.symbol || "";
+  if (item.symbol) buy.dataset.symbol = item.symbol;
+  if (item.assetClass) buy.dataset.assetClass = item.assetClass;
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "watch-remove ghost-btn";
+  remove.textContent = "Remove";
+  remove.dataset.key = watchlistKey(item);
+  actions.append(buy, remove);
+  li.append(actions);
+  return li;
+}
+
+function setupWatchlist() {
+  const body = document.getElementById("watchlist-body");
+  if (!body) return;
+  body.addEventListener("click", async (event) => {
+    const remove = event.target.closest(".watch-remove");
+    if (remove) {
+      await watchlistStore.remove(remove.dataset.key);
+      refreshWatchlist();
+      return;
+    }
+    const buy = event.target.closest(".pick-buy");
+    if (buy) {
+      prefillHolding({
+        name: buy.dataset.name,
+        symbol: buy.dataset.symbol,
+        assetClass: buy.dataset.assetClass,
+      });
+    }
+  });
+}
+
 async function ensureSeeded() {
+  // A real user's Portfolio starts EMPTY — no fake sample holdings — so
+  // onboarding P&L / "biggest mover" / "on track for" reflect reality. The
+  // one-shot marker just records that first-run completed.
   if (await holdingsStore.isSeeded()) return;
-  const defaults = await loadJson("./data/sample-holdings.json");
-  for (const h of defaults) await holdingsStore.put(h);
   await holdingsStore.markSeeded();
 }
 
@@ -1162,17 +1343,27 @@ function productTypeLabels(values) {
   });
 }
 
+// The investor's per-month saving rate, folding a yearly figure into the monthly
+// one (monthly + yearly/12) so "how much monthly or yearly" resolves to one rate.
+function effectiveMonthly(profile) {
+  return (
+    (Number(profile.monthlyContribution) || 0) +
+    (Number(profile.annualContribution) || 0) / 12
+  );
+}
+
 function buildFinSearchQuery(profile) {
   const bits = [
     `Savings and investment products for a ${profile.risk || "balanced"} retail investor`,
   ];
   const lump = Number(profile.lumpSum) || 0;
-  const monthly = Number(profile.monthlyContribution) || 0;
+  const monthly = effectiveMonthly(profile);
   if (lump > 0) bits.push(`investing a ${formatMoney(lump)} lump sum`);
   if (monthly > 0) bits.push(`contributing ${formatMoney(monthly)} monthly`);
   const types = productTypeLabels(profile.productTypes);
   if (types.length) bits.push(`open to ${types.join(", ")}`);
   if (profile.preferences) bits.push(`preferences: ${profile.preferences}`);
+  if (profile.excludes) bits.push(`avoiding: ${profile.excludes}`);
   return bits.join(", ") + ".";
 }
 
@@ -1197,12 +1388,16 @@ function buildFinRankInstructions(profile) {
     lines.push(
       `- Lump sum to invest ≈ ${formatMoney(lump)} (the minimum investment must fit; penalise products requiring more).`,
     );
-  const monthly = Number(profile.monthlyContribution) || 0;
+  const monthly = effectiveMonthly(profile);
   if (monthly > 0)
     lines.push(`- Adds ${formatMoney(monthly)} in contributions monthly.`);
   const types = productTypeLabels(profile.productTypes);
   if (types.length) lines.push(`- Open to: ${types.join(", ")}.`);
   if (profile.preferences) lines.push(`- Preferences: ${profile.preferences}`);
+  if (profile.excludes)
+    lines.push(
+      `- AVOID: the investor does not want ${profile.excludes} — score any such product 0 or omit it.`,
+    );
   const { market } = localeMarket();
   if (market)
     lines.push(
@@ -1254,6 +1449,8 @@ function productToPick(product) {
   };
   const where = [content.provider, content.url].filter(Boolean).join(" — ");
   if (where) pick.whereAvailable = where;
+  if (content.provider) pick.provider = content.provider;
+  if (content.url) pick.url = content.url;
   return pick;
 }
 
@@ -1375,6 +1572,12 @@ function renderPickCard(pick) {
 function renderPickActions(pick) {
   const actions = document.createElement("div");
   actions.className = "pick-actions";
+  const watch = document.createElement("button");
+  watch.type = "button";
+  watch.className = "pick-watch";
+  watch.textContent = "Save to watchlist";
+  watch.addEventListener("click", () => addToWatchlist(pick, watch));
+  actions.append(watch);
   const buy = document.createElement("button");
   buy.type = "button";
   buy.className = "pick-buy";
@@ -1667,6 +1870,7 @@ async function reportAppCapabilities() {
           { type: "news", label: "Asset news" },
           { type: "asset-info", label: "Asset description" },
           { type: "forecast-plan", label: "Financial plan / forecast" },
+          { type: "watchlist-item", label: "Watchlist" },
         ],
         activities: [
           "pipeline",
@@ -1886,7 +2090,7 @@ function renderHomeDigest() {
     if (!mover || Math.abs(pct) > Math.abs(mover.pct)) mover = { h, pct };
   }
 
-  const monthly = Number(appProfile.monthlyContribution) || 0;
+  const monthly = effectiveMonthly(appProfile);
   const risk = RISK_RETURN_BANDS[appProfile.risk]
     ? appProfile.risk
     : FORECAST_DEFAULT_RISK;
@@ -2651,9 +2855,7 @@ function applyProfileToForms(profile) {
   renderProductTypes("profile-products", profile.productTypes);
   renderProductTypes("start-products", profile.productTypes);
   const fm = document.getElementById("forecast-monthly");
-  if (fm && typeof profile.monthlyContribution === "number") {
-    fm.value = profile.monthlyContribution;
-  }
+  if (fm) fm.value = Math.round(effectiveMonthly(profile));
   const fr = document.getElementById("forecast-risk");
   if (fr && RISK_RETURN_BANDS[profile.risk]) fr.value = profile.risk;
   if (recalcForecast) recalcForecast();
@@ -2668,8 +2870,13 @@ function fillStartForm(profile) {
     typeof profile.monthlyContribution === "number"
       ? profile.monthlyContribution
       : "";
+  form.yearly.value =
+    typeof profile.annualContribution === "number"
+      ? profile.annualContribution
+      : "";
   form.risk.value = profile.risk || "balanced";
   form.preferences.value = profile.preferences || "";
+  form.excludes.value = profile.excludes || "";
   renderProductTypes("start-products", profile.productTypes);
 }
 
@@ -2685,8 +2892,10 @@ function setupStart(profile) {
     const saved = await saveProfile({
       lumpSum: Number(data.get("lumpSum")) || 0,
       monthlyContribution: Number(data.get("monthly")) || 0,
+      annualContribution: Number(data.get("yearly")) || 0,
       risk: String(data.get("risk") || "balanced"),
       preferences: String(data.get("preferences") || "").trim(),
+      excludes: String(data.get("excludes") || "").trim(),
       productTypes: readProductTypes("start-products"),
       onboarded: true,
     });
@@ -3041,6 +3250,7 @@ async function runPlanForecast() {
     monthly: Number(document.getElementById("forecast-monthly").value) || 0,
     goalAmount: Number(document.getElementById("forecast-goal").value) || 0,
     sleeveReturns,
+    accountType: document.getElementById("forecast-account").value,
     seed: 1,
   });
 
@@ -3095,9 +3305,7 @@ function setupForecast(profile) {
     ? profile.risk
     : FORECAST_DEFAULT_RISK;
   yearsEl.value = FORECAST_DEFAULT_YEARS;
-  if (typeof profile.monthlyContribution === "number") {
-    monthlyEl.value = profile.monthlyContribution;
-  }
+  monthlyEl.value = Math.round(effectiveMonthly(profile));
 
   const startEl = document.getElementById("forecast-start");
   if (startEl) startEl.textContent = formatMoney(portfolioCurrentValue);
@@ -3109,7 +3317,9 @@ function setupForecast(profile) {
     const noteEl = document.getElementById("forecast-data-note");
     if (noteEl && data && data._note) {
       noteEl.textContent =
-        "Probabilistic simulation — not financial advice. " + data._note;
+        "Probabilistic simulation — not financial advice. " +
+        data._note +
+        " Tax-wrapper rates are illustrative placeholders, not real per-market figures.";
     }
   });
 
@@ -3361,6 +3571,7 @@ const TABS = [
   { id: "proposals", label: "Proposals" },
   { id: "investigations", label: "Investigations" },
   { id: "portfolio", label: "Portfolio" },
+  { id: "watchlist", label: "Watchlist" },
   { id: "market", label: "Market" },
   { id: "forecast", label: "Forecast" },
   { id: "news", label: "News" },
@@ -3477,6 +3688,7 @@ function showTab(id) {
   if (target === "home") handleHomeOpen();
   if (target === "proposals") refreshProposalsFromStore();
   if (target === "investigations") refreshInvestigations();
+  if (target === "watchlist") refreshWatchlist();
   if (target === "news") refreshNews();
 }
 
@@ -3529,6 +3741,7 @@ async function init() {
     setupMarket();
     setupInvestigations();
     setupNews();
+    setupWatchlist();
     updateCurrencyUI();
     setupHoldingControls();
     await setupProposals(topPicks);

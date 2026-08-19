@@ -386,6 +386,36 @@ body {
 .pick-buy:hover {
   border-color: var(--accent);
 }
+.pick-watch {
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.pick-watch:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.pick-watch:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+.watch-item {
+  padding: 12px 14px;
+}
+.watch-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.watch-remove {
+  font-size: 13px;
+}
 
 /* ---- Product-type picker (onboarding + profile) -------------------------- */
 .product-types {

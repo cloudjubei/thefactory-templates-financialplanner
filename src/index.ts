@@ -19,3 +19,12 @@ export * from './provable/provableUtils.js'
 
 export * from './tax/taxTypes.js'
 export * from './tax/taxUtils.js'
+
+export * from './surfacing/surfacingTypes.js'
+export * from './surfacing/surfacingUtils.js'
+
+export * from './instruments/instrumentTypes.js'
+export * from './instruments/instrumentUtils.js'
+
+export * from './gating/gatingTypes.js'
+export * from './gating/gatingUtils.js'

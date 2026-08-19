@@ -77,6 +77,20 @@ const PLAN_TILT_PREMIUM = {
   incrementalCost: 0.003,
 };
 
+// Account type → tax-wrapper structure. The RATES here are ILLUSTRATIVE
+// placeholders, not real per-market figures — the real rates are [LIVE],
+// sourced per market at build-time. Only the STRUCTURE (TEE/EET/taxable) is
+// meaningful today.
+const ACCOUNT_TYPE_TO_WRAPPER = {
+  taxable: { wrapper: "taxable", annualGrowthTaxRate: 0.005 },
+  taxfree: { wrapper: "tee" },
+  taxrelief: { wrapper: "eet", marginalContributionRate: 0.2, withdrawalTaxRate: 0.15 },
+};
+
+function accountTypeToWrapper(accountType) {
+  return ACCOUNT_TYPE_TO_WRAPPER[accountType] || ACCOUNT_TYPE_TO_WRAPPER.taxable;
+}
+
 function buildPlanRequest({
   risk,
   years,
@@ -84,6 +98,7 @@ function buildPlanRequest({
   monthly,
   goalAmount,
   sleeveReturns,
+  accountType,
   seed,
 }) {
   const mapped =
@@ -109,6 +124,7 @@ function buildPlanRequest({
     config: { blockSize: 12, paths: 500 },
     periodsPerYear: 12,
     tiltPremium: PLAN_TILT_PREMIUM,
+    wrapper: accountTypeToWrapper(accountType),
   };
   if (typeof seed === "number") request.seed = seed;
   return request;

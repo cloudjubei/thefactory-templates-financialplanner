@@ -66,6 +66,19 @@
                 </span>
               </label>
               <label class="field">
+                <span>…or per year? <em>(counts on top of monthly)</em></span>
+                <span class="input-wrap">
+                  <span class="prefix currency-prefix">$</span>
+                  <input
+                    name="yearly"
+                    type="number"
+                    min="0"
+                    step="100"
+                    placeholder="0"
+                  />
+                </span>
+              </label>
+              <label class="field">
                 <span>Risk appetite</span>
                 <select name="risk">
                   <option value="cautious">
@@ -83,6 +96,14 @@
                   name="preferences"
                   maxlength="80"
                   placeholder="e.g. clean energy, tech"
+                />
+              </label>
+              <label class="field">
+                <span>Anything to avoid? <em>(optional)</em></span>
+                <input
+                  name="excludes"
+                  maxlength="80"
+                  placeholder="e.g. crypto, high-fee funds"
                 />
               </label>
               <div class="field">
@@ -142,7 +163,9 @@
             <div class="card-head">
               <h2>Proposals</h2>
               <p class="card-sub">
-                Ideas tailored to your country and investment focus.
+                Ideas tailored to your country and investment focus. Save ones
+                you like to your Watchlist, or mark ones you own into your
+                Portfolio.
               </p>
             </div>
             <div class="proposals-actions">
@@ -176,6 +199,23 @@
               </p>
             </div>
             <div id="investigations-body" class="investigations-empty"></div>
+          </div>
+        </section>
+
+        <!-- Watchlist (saved from proposals; no money committed) -->
+        <section id="tab-watchlist" class="tab-panel" role="tabpanel" hidden>
+          <div class="card">
+            <div class="card-head">
+              <h2>Watchlist</h2>
+              <p class="card-sub">
+                Things you're keeping an eye on — saved from proposals, no money
+                committed. Mark one as bought to move it into your Portfolio.
+              </p>
+            </div>
+            <div id="watchlist-body" class="top-picks-empty">
+              <p class="empty-emoji" aria-hidden="true">👀</p>
+              <p>Save proposals you like here from the Proposals tab.</p>
+            </div>
           </div>
         </section>
 
@@ -477,6 +517,16 @@
                   <option value="adventurous">Adventurous</option>
                 </select>
               </label>
+              <label class="field">
+                <span>Account type</span>
+                <select id="forecast-account">
+                  <option value="taxable">Taxable (general)</option>
+                  <option value="taxfree">Tax-free (ISA / IKE-style)</option>
+                  <option value="taxrelief">
+                    Tax-relief (pension / IKZE-style)
+                  </option>
+                </select>
+              </label>
               <button type="submit" id="forecast-run">Run forecast</button>
             </form>
 
@@ -635,13 +685,13 @@
           </section>
         </section>
 
-        <!-- Home (daily digest + advisor) -->
+        <!-- Home (digest + advisor) -->
         <section id="tab-home" class="tab-panel" role="tabpanel" hidden>
           <p id="home-whatsnew" class="home-whatsnew" role="status" hidden></p>
 
           <section class="card home-digest" aria-labelledby="home-h">
             <div class="card-head">
-              <h2 id="home-h">Your daily digest</h2>
+              <h2 id="home-h">Your digest</h2>
               <p class="card-sub">Where things stand today.</p>
             </div>
             <div id="home-digest-body" class="digest-grid"></div>
@@ -650,7 +700,9 @@
           <section class="card home-advice" aria-labelledby="advice-h">
             <div class="card-head">
               <h2 id="advice-h">What to consider next</h2>
-              <p class="card-sub">AI-suggested moves, refreshed daily.</p>
+              <p class="card-sub">
+                AI-suggested moves, refreshed when you open this tab.
+              </p>
             </div>
             <div class="advice-actions">
               <button type="button" id="refresh-advice">Refresh advice</button>
