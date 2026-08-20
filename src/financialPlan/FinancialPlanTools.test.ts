@@ -62,3 +62,16 @@ describe('createFinancialPlanTools.buildFinancialPlan', () => {
     ).toThrow(RangeError)
   })
 })
+
+describe('createFinancialPlanTools.solveRequiredContribution', () => {
+  it('solves the per-period contribution needed to reach the goal', () => {
+    const tools = createFinancialPlanTools()
+    const solved = tools.solveRequiredContribution(
+      request({ seed: 1, goal: { targetAmount: 30000, horizonYears: 15 } }),
+      { targetSuccess: 0.6 },
+    )
+    expect(solved.perPeriod).toBeGreaterThan(0)
+    expect(solved.targetSuccess).toBe(0.6)
+    expect(solved.achievable).toBe(true)
+  })
+})

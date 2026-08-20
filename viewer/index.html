@@ -553,6 +553,20 @@
                 </div>
               </div>
 
+              <p id="forecast-funded" class="forecast-funded" hidden></p>
+
+              <div class="forecast-required">
+                <button type="button" id="forecast-required-btn">
+                  How much should I save to reach this goal?
+                </button>
+                <p
+                  id="forecast-required-result"
+                  class="forecast-required-result"
+                  role="status"
+                  aria-live="polite"
+                ></p>
+              </div>
+
               <div class="chart-wrap">
                 <canvas
                   id="forecast-chart"
@@ -563,6 +577,7 @@
               <div class="forecast-allocation">
                 <h3 class="forecast-subhead">Strategic allocation</h3>
                 <ul id="forecast-sleeves" class="forecast-sleeves"></ul>
+                <p id="forecast-suitability" class="forecast-note"></p>
               </div>
 
               <ul id="forecast-caveats" class="forecast-caveats"></ul>

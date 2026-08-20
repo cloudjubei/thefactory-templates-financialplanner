@@ -42,8 +42,8 @@ export interface FundCandidate {
   name: string
   /** Total expense ratio as a decimal. */
   ter: number
-  /** The fund's tracking difference vs its benchmark (mean ± SE). */
-  trackingDifference: TrackingDifferenceStats
+  /** The fund's tracking difference vs its benchmark (mean ± SE); omit when no return data is available. */
+  trackingDifference?: TrackingDifferenceStats
   /** Whether the fund is UCITS-eligible. */
   ucitsEligible: boolean
 }
@@ -67,6 +67,38 @@ export interface CandidateVerdict {
   recommend: boolean
   /** The cited reasons behind the verdict (auditable trail). */
   reasons: string[]
+}
+
+/**
+ * A recommend-engine product, in the fields the app's LLM extraction produces.
+ * `expectedReturnPct` and `feesPct` are PERCENTAGES (e.g. 4.5, 0.25); the adapter
+ * converts them to decimals for the gates.
+ */
+export interface RecommendProduct {
+  /** savings | isa | bond | fund | etf | stock | crypto | pension. */
+  productType?: string
+  /** Product name — disambiguates wrapper types (e.g. a "Cash ISA" vs a "Stocks & Shares ISA"). */
+  name?: string
+  /** Advertised/historical annual return as a percentage (e.g. 4.5). */
+  expectedReturnPct?: number
+  /** Total annual fee as a percentage (e.g. 0.25). */
+  feesPct?: number
+  /** Whether the balance is deposit-guarantee covered. */
+  depositGuaranteeCovered?: boolean
+  /** Whether the fund is UCITS-eligible. */
+  ucitsEligible?: boolean
+  /** Whether the headline rate is an introductory teaser. */
+  isTeaserRate?: boolean
+  /** The fund's tracking difference when return data exists. */
+  trackingDifference?: TrackingDifferenceStats
+}
+
+/** Per-class gate thresholds (market-specific, `[LIVE]`-sourced by the caller). */
+export interface GateConfigs {
+  /** Savings/cash gate thresholds. */
+  savings: SavingsGateConfig
+  /** Fund/ETF gate thresholds. */
+  fund: FundGateConfig
 }
 
 /** A single labeled prediction for the golden-corpus harness. */

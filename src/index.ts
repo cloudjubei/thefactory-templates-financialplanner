@@ -28,3 +28,15 @@ export * from './instruments/instrumentUtils.js'
 
 export * from './gating/gatingTypes.js'
 export * from './gating/gatingUtils.js'
+
+export { createSuitabilityTools } from './suitability/SuitabilityTools.js'
+export * from './suitability/suitabilityTypes.js'
+export * from './suitability/suitabilityConstants.js'
+export * from './suitability/suitabilityUtils.js'
+
+export { createGoalTools } from './goal/GoalTools.js'
+export * from './goal/goalTypes.js'
+export * from './goal/goalConstants.js'
+export * from './goal/goalUtils.js'
+
+export * from './markets/marketGateProfiles.js'

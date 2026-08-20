@@ -10,6 +10,8 @@ import type {
   ReturnSeries,
 } from '../projection/projectionTypes.js'
 import type { WrapperTaxSpec } from '../tax/taxTypes.js'
+import type { SuitabilityAssessment } from '../suitability/suitabilityTypes.js'
+import type { FundedStatus, RequiredContribution } from '../goal/goalTypes.js'
 
 /**
  * The end-to-end financial-planning composition: chain a suitability profile and
@@ -71,14 +73,29 @@ export interface FinancialPlanRequest {
 
 /** A complete financial plan: the strategic allocation plus a probabilistic projection vs the goal. */
 export interface FinancialPlan {
-  /** The doctrine-driven strategic sleeve allocation. */
+  /**
+   * The suitability resolution behind the allocation: declared willingness vs
+   * horizon-derived ability, and the effective (more conservative) bucket used.
+   */
+  suitability: SuitabilityAssessment
+  /** The doctrine-driven strategic sleeve allocation (sized to the EFFECTIVE bucket). */
   allocation: StrategicAllocation
   /** The block-bootstrap Monte-Carlo projection scored against the goal. */
   projection: ProjectionResult
   /** The goal the projection was scored against. */
   goal: FinancialGoal
-  /** Combined honesty caveats (allocation caveats + the goal-probability caveat). */
+  /** Whether the projection is on track for the goal (funded ratio + verdict). */
+  fundedStatus: FundedStatus
+  /** Combined honesty caveats (allocation + goal-probability + any suitability-cap caveat). */
   caveats: string[]
+}
+
+/** Options for {@link FinancialPlanTools.solveRequiredContribution}. */
+export interface SolveContributionOptions {
+  /** Desired probability of reaching the goal, in (0,1). Defaults to the module default. */
+  targetSuccess?: number
+  /** Affordability ceiling on the investor's per-period contribution. */
+  maxPerPeriod?: number
 }
 
 /** End-to-end financial planning, exposed as a chat-invocable tool. */
@@ -90,4 +107,14 @@ export interface FinancialPlanTools {
    * @param request The full planning inputs.
    */
   buildFinancialPlan(request: FinancialPlanRequest): FinancialPlan
+  /**
+   * Solve for the per-period contribution needed to reach the request's goal with a
+   * target probability, using the same effective allocation a full plan would.
+   * @param request The full planning inputs (its `contributions.perPeriod` is ignored — it is what we solve for).
+   * @param options Target probability and affordability ceiling.
+   */
+  solveRequiredContribution(
+    request: FinancialPlanRequest,
+    options?: SolveContributionOptions,
+  ): RequiredContribution
 }

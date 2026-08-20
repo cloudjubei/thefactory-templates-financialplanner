@@ -2,12 +2,13 @@ import { describe, it, expect } from 'vitest'
 
 import type { SleeveKey } from '../allocation/allocationTypes.js'
 import { createSeededRng } from '../projection/projectionUtils.js'
-import { GOAL_PROBABILITY_CAVEAT } from './financialPlanConstants.js'
+import { GOAL_PROBABILITY_CAVEAT, SUITABILITY_CAP_CAVEAT } from './financialPlanConstants.js'
 import type { FinancialPlanRequest } from './financialPlanTypes.js'
 import {
   blendReturnSeries,
   composeFinancialPlan,
   deriveTiltEvidence,
+  solvePlanContribution,
 } from './financialPlanUtils.js'
 
 const SERIES_24: number[] = Array.from({ length: 24 }, (_, i) => (i % 2 === 0 ? 0.03 : -0.02))
@@ -129,6 +130,52 @@ describe('composeFinancialPlan', () => {
     expect(sum).toBeCloseTo(1, 9)
   })
 
+  it('resolves suitability to the effective (more conservative) bucket', () => {
+    const plan = composeFinancialPlan(baseRequest(), createSeededRng(1))
+    expect(plan.suitability.willingness).toBe('balanced')
+    expect(plan.suitability.ability).toBe('adventurous')
+    expect(plan.suitability.effective).toBe('balanced')
+    expect(plan.suitability.binding).toBe('willingness')
+    expect(plan.caveats).not.toContain(SUITABILITY_CAP_CAVEAT)
+  })
+
+  it('caps the allocation to horizon-derived capacity when appetite exceeds ability', () => {
+    const capped = composeFinancialPlan(
+      baseRequest({
+        profile: {
+          horizonYears: 1,
+          riskTolerance: 'adventurous',
+          phase: 'accumulation',
+          tiltAppetite: 1,
+        },
+        goal: { targetAmount: 20000, horizonYears: 1 },
+      }),
+      createSeededRng(1),
+    )
+    const eager = composeFinancialPlan(
+      baseRequest({
+        profile: {
+          horizonYears: 25,
+          riskTolerance: 'adventurous',
+          phase: 'accumulation',
+          tiltAppetite: 1,
+        },
+      }),
+      createSeededRng(1),
+    )
+    expect(capped.suitability.effective).toBe('cautious')
+    expect(capped.suitability.binding).toBe('ability')
+    expect(capped.caveats).toContain(SUITABILITY_CAP_CAVEAT)
+    expect(capped.allocation.equityShare).toBeLessThan(eager.allocation.equityShare)
+  })
+
+  it('reports a funded status assessed against the goal', () => {
+    const plan = composeFinancialPlan(baseRequest(), createSeededRng(1))
+    expect(plan.fundedStatus.target).toBe(20000)
+    expect(['on-track', 'at-risk', 'shortfall']).toContain(plan.fundedStatus.verdict)
+    expect(plan.fundedStatus.fundedRatio).toBeGreaterThan(0)
+  })
+
   it('lets a positive haircut premium size the tilt', () => {
     const plan = composeFinancialPlan(baseRequest(), createSeededRng(1))
     const tilt = plan.allocation.sleeves.find((s) => s.sleeve === 'valueQualityTilt')?.weight ?? 0
@@ -223,5 +270,39 @@ describe('composeFinancialPlan', () => {
       createSeededRng(11),
     )
     expect(taxable.projection.terminal.p50).toBeLessThan(tee.projection.terminal.p50)
+  })
+})
+
+describe('solvePlanContribution', () => {
+  it('solves a contribution that, fed back into the plan, clears the target probability', () => {
+    const req = baseRequest({ seed: 1, goal: { targetAmount: 30000, horizonYears: 15 } })
+    const solved = solvePlanContribution(req, { targetSuccess: 0.7 })
+    expect(solved.achievable).toBe(true)
+    const roundTrip = composeFinancialPlan(
+      { ...req, contributions: { ...req.contributions, perPeriod: solved.perPeriod } },
+      createSeededRng(1),
+    )
+    expect(roundTrip.projection.probabilityOfSuccess).toBeGreaterThanOrEqual(0.7)
+  })
+
+  it('needs a larger contribution for a bigger goal', () => {
+    const small = solvePlanContribution(
+      baseRequest({ seed: 1, goal: { targetAmount: 25000, horizonYears: 15 } }),
+      { targetSuccess: 0.7 },
+    )
+    const big = solvePlanContribution(
+      baseRequest({ seed: 1, goal: { targetAmount: 60000, horizonYears: 15 } }),
+      { targetSuccess: 0.7 },
+    )
+    expect(big.perPeriod).toBeGreaterThan(small.perPeriod)
+  })
+
+  it('reports not achievable when the goal exceeds the affordability ceiling', () => {
+    const solved = solvePlanContribution(
+      baseRequest({ seed: 1, goal: { targetAmount: 5_000_000, horizonYears: 15 } }),
+      { targetSuccess: 0.8, maxPerPeriod: 25 },
+    )
+    expect(solved.achievable).toBe(false)
+    expect(solved.perPeriod).toBeCloseTo(25, 6)
   })
 })

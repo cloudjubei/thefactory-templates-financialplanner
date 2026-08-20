@@ -1299,12 +1299,14 @@ function buildFinCatalogSpec(language) {
       '"expectedReturnPct": number, "returnType": EXACTLY one lowercase value of fixed|variable|historical, ' +
       '"riskLevel": EXACTLY one lowercase value of low|medium|high, "minInvestment": number, ' +
       '"feesPct": number, "liquidity": EXACTLY one lowercase value of instant|notice|fixed-term, ' +
-      '"termMonths": number, "url": string }. ' +
+      '"termMonths": number, "url": string, ' +
+      '"depositGuaranteeCovered": boolean, "ucitsEligible": boolean, "isTeaserRate": boolean }. ' +
       "name is the official product name and provider is {supplier}. summary is one buyer-facing sentence; description is a short paragraph (2-4 sentences) covering who the product suits, its risk/return character, and standout traits — these power search, so make them genuinely descriptive. " +
       "productType, returnType, riskLevel and liquidity MUST be lowercase English enums (exactly the values listed). " +
       "expectedReturnPct is the advertised or historical annual return as a number like 4.5; returnType says whether that figure is fixed, variable, or a historical average. " +
       "minInvestment MUST be a plain integer in the local currency with NO symbols, commas, or quotes. feesPct is the total annual fee as a number like 0.25. " +
       "termMonths is an integer count of months for fixed-term products — OMIT it when the product is open-ended. " +
+      "depositGuaranteeCovered is true ONLY for cash/savings products whose balance is protected by this market's statutory deposit-guarantee scheme (e.g. FSCS in the UK, BFG in Poland) up to its limit; ucitsEligible is true ONLY for UCITS-regulated funds/ETFs; isTeaserRate is true when the headline rate is an introductory/bonus rate that later drops. Set each boolean only when the sources make it clear — OMIT it when you cannot tell. " +
       "url is the official {supplier} page for this product in {market}, copied EXACTLY from the sources — never invent or guess a URL. " +
       "Omit any field you cannot determine from the sources rather than guessing. " +
       'Example: { "name": "1 Year Fixed Rate Saver", "provider": "Example Bank", "summary": "A low-risk fixed-term savings bond with a guaranteed rate.", "description": "Suits cautious savers who can lock money away for a year in exchange for a guaranteed return. No fees, capital is protected, but funds are inaccessible until maturity.", "productType": "savings", "expectedReturnPct": 4.3, "returnType": "fixed", "riskLevel": "low", "minInvestment": 1000, "feesPct": 0, "liquidity": "fixed-term", "termMonths": 12, "url": "https://www.examplebank.example/fixed-saver" }. ' +
@@ -1459,6 +1461,7 @@ async function refreshProposalsFromStore() {
   const items = content ? content.items : [];
   renderRankedPicks(items.length ? items : proposalsStaticPicks);
   const status = document.getElementById("opportunities-status");
+  maybeGateProposals(content);
   if (!status) return;
   const { market } = localeMarket();
   if (content && content.market && market && content.market !== market) {
@@ -1466,6 +1469,68 @@ async function refreshProposalsFromStore() {
   } else if (status.textContent.includes(STALE_COUNTRY_MARK)) {
     // Clear only our own stale note, never a findProposals empty/error message.
     status.textContent = "";
+  }
+}
+
+// --- Honesty-bar gating (financialtools, host-side) ------------------------
+// After proposals render, run each product through its class's provable gates
+// via the host `gate` activity, then annotate the cards with the verdict. The
+// gate config's rates are ILLUSTRATIVE placeholders — the real per-market
+// inflation/tax figures are [LIVE], sourced later.
+const GATE_RECORD_TYPE = "catalog-fin-product";
+let gatingInFlight = false;
+let lastGatedSignature = "";
+
+function gateKey(p) {
+  return `${(p && p.provider) || ""}::${(p && p.name) || ""}`;
+}
+
+function buildGateConfig() {
+  return {
+    savings: { expectedInflation: 0.03, taxRate: 0.2, minRealYield: 0 },
+    fund: { maxTer: 0.005, minTrackingLowerBound: -0.005, requireUcits: false },
+  };
+}
+
+async function maybeGateProposals(content) {
+  const bridge = window.OverseerBridge;
+  if (!bridge || !bridge.embedded || gatingInFlight) return;
+  if (!content || !Array.isArray(content.products) || !content.products.length) return;
+  const products = content.products.map((p) => p.content).filter(Boolean);
+  if (!products.length) return;
+  const signature = products.map(gateKey).join("|");
+  if (signature === lastGatedSignature) return;
+  gatingInFlight = true;
+  try {
+    const started = await bridge.startActivity("gate", {
+      recordType: GATE_RECORD_TYPE,
+      products,
+      // The backend resolves the real per-market profile from this code (e.g.
+      // GB→UK, PL); the illustrative config is only a fallback for other markets.
+      market: (appSettings && appSettings.country) || activeCountry,
+      gateConfig: buildGateConfig(),
+    });
+    const gateId = started && started.activityId;
+    if (!gateId) return;
+    await observeJobActivity(gateId);
+    const recs = await bridge.queryData({
+      type: GATE_RECORD_TYPE + "-gated",
+      key: gateId,
+    });
+    const gated = recs && recs[0] && recs[0].content;
+    if (!gated || !Array.isArray(gated.items)) return;
+    const verdictByKey = new Map();
+    for (const it of gated.items) verdictByKey.set(gateKey(it), it.gateVerdict || null);
+    const picks = content.items.map((pick) => {
+      const v = verdictByKey.get(gateKey(pick));
+      return v ? { ...pick, gateVerdict: v } : pick;
+    });
+    renderRankedPicks(picks);
+    lastGatedSignature = signature;
+  } catch {
+    // non-fatal — proposals still show ungated
+  } finally {
+    gatingInFlight = false;
   }
 }
 
@@ -1555,6 +1620,18 @@ function renderPickCard(pick) {
     where.className = "pick-where";
     where.textContent = `Where: ${pick.whereAvailable}`;
     details.append(where);
+  }
+  if (pick.gateVerdict) {
+    const gate = document.createElement("div");
+    gate.className = pick.gateVerdict.recommend
+      ? "pick-gate pick-gate-pass"
+      : "pick-gate pick-gate-fail";
+    const label = pick.gateVerdict.recommend
+      ? "✓ Clears the honesty bar"
+      : "✗ Below the honesty bar";
+    const reasons = (pick.gateVerdict.reasons || []).join("; ");
+    gate.textContent = reasons ? `${label} — ${reasons}` : label;
+    details.append(gate);
   }
   details.append(renderPickActions(pick));
 
@@ -1715,7 +1792,11 @@ async function loadLatestProposalsContent() {
   for (const run of runs) {
     const recs = await readRecommendations(run.runId);
     if (recs && Array.isArray(recs.products) && recs.products.length) {
-      return { items: recs.products.map(productToPick), market: run.market };
+      return {
+        items: recs.products.map(productToPick),
+        products: recs.products,
+        market: run.market,
+      };
     }
   }
   return null;
@@ -1859,9 +1940,9 @@ async function reportAppCapabilities() {
       // an LLM, so they need an API config — declare API-only by default. The `pipeline` catalog build is
       // the exception: it can run on a more capable CLI agent, so allow-list it for CLI.
       activitiesApiOnly: true,
-      // `plan` is deterministic (no LLM), but allow-list it for CLI too so it is
-      // never gated by the API-only default.
-      cliActivities: ["pipeline", "plan"],
+      // `plan` and `gate` are deterministic (no LLM), but allow-list them for CLI
+      // too so they are never gated by the API-only default.
+      cliActivities: ["pipeline", "plan", "solve-contribution", "gate"],
       data: {
         types: [
           { type: "opportunity", label: "Investment opportunities" },
@@ -1870,7 +1951,9 @@ async function reportAppCapabilities() {
           { type: "news", label: "Asset news" },
           { type: "asset-info", label: "Asset description" },
           { type: "forecast-plan", label: "Financial plan / forecast" },
+          { type: "forecast-required", label: "Required contribution" },
           { type: "watchlist-item", label: "Watchlist" },
+          { type: "catalog-fin-product-gated", label: "Gated proposals" },
         ],
         activities: [
           "pipeline",
@@ -1880,6 +1963,8 @@ async function reportAppCapabilities() {
           "news",
           "asset-info",
           "plan",
+          "solve-contribution",
+          "gate",
         ],
       },
     });
@@ -3083,6 +3168,90 @@ async function readPlan(runId) {
   }
 }
 
+async function readRequired(runId) {
+  if (!runId) return null;
+  try {
+    const recs = await window.OverseerBridge.queryData({
+      type: FORECAST_RECORD_TYPE + "-required",
+      key: runId,
+    });
+    return (recs && recs[0] && recs[0].content) || null;
+  } catch {
+    return null;
+  }
+}
+
+function buildCurrentForecastRequest(sleeveReturns) {
+  return buildPlanRequest({
+    risk: document.getElementById("forecast-risk").value,
+    years: document.getElementById("forecast-years").value,
+    initial: portfolioCurrentValue,
+    monthly: Number(document.getElementById("forecast-monthly").value) || 0,
+    goalAmount: Number(document.getElementById("forecast-goal").value) || 0,
+    sleeveReturns,
+    accountType: document.getElementById("forecast-account").value,
+    seed: 1,
+  });
+}
+
+const REQUIRED_TARGET_SUCCESS = 0.8;
+
+function renderRequiredContribution(rec) {
+  const el = document.getElementById("forecast-required-result");
+  if (!el || !rec) return;
+  const monthly = formatMoney(rec.perPeriod);
+  const pct = Math.round((rec.targetSuccess || REQUIRED_TARGET_SUCCESS) * 100);
+  el.textContent = rec.achievable
+    ? `Save about ${monthly}/month to have a ${pct}% chance of reaching your goal.`
+    : `Even at ${monthly}/month you'd miss a ${pct}% chance — a longer horizon or a lower goal would close the gap.`;
+}
+
+async function runRequiredContribution() {
+  const bridge = window.OverseerBridge;
+  const el = document.getElementById("forecast-required-result");
+  if (!bridge || !bridge.embedded) {
+    if (el) el.textContent = "Open this app inside Overseer to solve this.";
+    return;
+  }
+  const goalAmount = Number(document.getElementById("forecast-goal").value) || 0;
+  if (goalAmount <= 0) {
+    if (el) el.textContent = "Set a goal (target value) above to solve for the saving needed.";
+    return;
+  }
+  const data = await loadForecastData();
+  const sleeveReturns = data && data.returns;
+  if (!sleeveReturns) {
+    if (el) el.textContent = "Could not load return data.";
+    return;
+  }
+  const request = buildCurrentForecastRequest(sleeveReturns);
+  if (el) el.textContent = "Solving…";
+  let activityId;
+  try {
+    const started = await bridge.startActivity("solve-contribution", {
+      recordType: FORECAST_RECORD_TYPE,
+      request,
+      targetSuccess: REQUIRED_TARGET_SUCCESS,
+    });
+    activityId = started && started.activityId;
+  } catch (err) {
+    if (el) el.textContent = (err && err.message) || "Could not start the solve.";
+    return;
+  }
+  if (!activityId) {
+    if (el) el.textContent = "Could not start the solve.";
+    return;
+  }
+  try {
+    await observeJobActivity(activityId);
+    const rec = await readRequired(activityId);
+    if (rec) renderRequiredContribution(rec);
+    else if (el) el.textContent = "The solve finished but no result was found.";
+  } catch (err) {
+    if (el) el.textContent = (err && err.message) || "The solve failed.";
+  }
+}
+
 function setForecastRunning(on) {
   const btn = document.getElementById("forecast-run");
   if (btn) {
@@ -3220,7 +3389,47 @@ function renderForecastResult(plan) {
       .join("");
   }
 
+  renderFundedStatus(plan.fundedStatus);
+
+  const suitabilityEl = document.getElementById("forecast-suitability");
+  if (suitabilityEl) {
+    suitabilityEl.textContent =
+      plan.suitability && plan.suitability.rationale
+        ? plan.suitability.rationale
+        : "";
+  }
+
   renderForecastFan(plan);
+}
+
+const FUNDED_LABELS = {
+  "on-track": "On track",
+  "at-risk": "At risk",
+  shortfall: "Shortfall",
+};
+
+function renderFundedStatus(fs) {
+  const el = document.getElementById("forecast-funded");
+  if (!el) return;
+  if (!fs || typeof fs.fundedRatio !== "number") {
+    el.hidden = true;
+    return;
+  }
+  const label = FUNDED_LABELS[fs.verdict] || fs.verdict;
+  const pct = Math.round(fs.fundedRatio * 100);
+  let detail;
+  if (fs.verdict === "shortfall") {
+    detail = `the median outcome falls ${formatMoney(
+      fs.medianShortfall,
+    )} short of your goal`;
+  } else if (fs.verdict === "at-risk") {
+    detail = "the median clears your goal, but with limited margin";
+  } else {
+    detail = "the median outcome clears your goal";
+  }
+  el.textContent = `${label} — ${detail} (funded ratio ${pct}%).`;
+  el.className = `forecast-funded funded-${fs.verdict}`;
+  el.hidden = false;
 }
 
 async function runPlanForecast() {
@@ -3243,16 +3452,7 @@ async function runPlanForecast() {
     return;
   }
 
-  const request = buildPlanRequest({
-    risk: document.getElementById("forecast-risk").value,
-    years: document.getElementById("forecast-years").value,
-    initial: portfolioCurrentValue,
-    monthly: Number(document.getElementById("forecast-monthly").value) || 0,
-    goalAmount: Number(document.getElementById("forecast-goal").value) || 0,
-    sleeveReturns,
-    accountType: document.getElementById("forecast-account").value,
-    seed: 1,
-  });
+  const request = buildCurrentForecastRequest(sleeveReturns);
 
   observingForecastRun = true;
   setForecastRunning(true);
@@ -3327,6 +3527,11 @@ function setupForecast(profile) {
     event.preventDefault();
     runPlanForecast();
   });
+
+  const requiredBtn = document.getElementById("forecast-required-btn");
+  if (requiredBtn) {
+    requiredBtn.addEventListener("click", runRequiredContribution);
+  }
 
   // Currency changes only re-render the display of the last result + start value.
   recalcForecast = () => {
